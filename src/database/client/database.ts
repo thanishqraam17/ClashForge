@@ -4,6 +4,10 @@ import { dirname } from 'path'
 import { createBuildingRepository, type BuildingRepository } from '../repositories/building-repository'
 import { createHeroRepository, type HeroRepository } from '../repositories/hero-repository'
 import { createResearchRepository, type ResearchRepository } from '../repositories/research-repository'
+import {
+  createUpgradeHistoryRepository,
+  type UpgradeHistoryRepository
+} from '../repositories/upgrade-history-repository'
 import { createVillageRepository, type VillageRepository } from '../repositories/village-repository'
 import { runMigrations } from '../schema/migrate'
 
@@ -17,6 +21,7 @@ export type ClashForgeDatabase = {
   readonly buildings: BuildingRepository
   readonly heroes: HeroRepository
   readonly research: ResearchRepository
+  readonly upgradeHistory: UpgradeHistoryRepository
   healthCheck: () => void
   close: () => void
 }
@@ -36,6 +41,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
   const buildings = createBuildingRepository(db)
   const heroes = createHeroRepository(db)
   const research = createResearchRepository(db)
+  const upgradeHistory = createUpgradeHistoryRepository(db)
 
   return {
     dbPath: options.dbPath,
@@ -43,6 +49,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
     buildings,
     heroes,
     research,
+    upgradeHistory,
     healthCheck(): void {
       db.prepare('SELECT 1 AS ok').get()
     },
