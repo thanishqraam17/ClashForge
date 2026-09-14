@@ -1,0 +1,54 @@
+@import 'tailwindcss';
+
+@theme {
+  /* Spacing: default Tailwind scale */
+  /* Typography */
+  --font-sans: 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+
+  /* Surfaces */
+  --color-background: #0f1114;
+  --color-surface-0: #0f1114;
+  --color-surface-1: #15181d;
+  --color-surface-2: #1a1e24;
+  --color-surface-3: #222830;
+
+  /* Borders */
+  --color-border: #2a313c;
+  --color-border-subtle: #1f242c;
+
+  /* Text */
+  --color-foreground: #e8eaed;
+  --color-muted: #8b939e;
+  --color-muted-foreground: #6b7280;
+
+  /* Accent — restrained gold for CoC companion, not neon */
+  --color-accent: #c9a227;
+  --color-accent-foreground: #0f1114;
+
+  /* Status */
+  --color-success: #3d9a6a;
+  --color-warning: #c9923d;
+  --color-destructive: #c45c5c;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased text-sm leading-normal;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+}
