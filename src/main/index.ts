@@ -1,7 +1,11 @@
+import { createDatabase, type ClashForgeDatabase } from '../database/client/database'
+import { resolveProductionDatabasePath } from '../database/client/database-path'
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 
 const isDev = !app.isPackaged
+
+let appDatabase: ClashForgeDatabase | null = null
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -36,11 +40,24 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  const dbPath = resolveProductionDatabasePath(app.getPath('userData'))
+  appDatabase = createDatabase({ dbPath })
+  appDatabase.healthCheck()
+
+  if (isDev) {
+    console.info('[ClashForge] Database ready at', dbPath)
+  }
+
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+app.on('will-quit', () => {
+  appDatabase?.close()
+  appDatabase = null
 })
 
 app.on('window-all-closed', () => {
