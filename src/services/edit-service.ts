@@ -20,6 +20,7 @@ import {
   type VillageItemInstance
 } from '../domain/village-state'
 import { findTownHallViolations } from '../import/import-planner'
+import type { LegacyKind, LegacyRecord } from '../database/repositories/legacy-record-repository'
 import type { TownHallService } from './town-hall-service'
 import {
   CatalogueCoverageError,
@@ -68,6 +69,30 @@ export type EditService = {
    * included.
    */
   setItemCount: (input: BulkCountInput) => BulkEditResult
+  /**
+   * Converts a pending legacy record into manual, confirmed catalogue records:
+   * `quantity` idle instances for a building, one idle hero, or one idle
+   * research row. The archived record itself only changes reconciliation fields.
+   */
+  mapLegacyRecord: (input: LegacyMapInput) => LegacyMapResult
+  /** pending -> dismissed. */
+  dismissLegacyRecord: (input: LegacyRecordRef) => void
+  /** dismissed -> pending. Converted records cannot be restored. */
+  restoreLegacyRecord: (input: LegacyRecordRef) => void
+}
+
+export type LegacyRecordRef = { kind: LegacyKind; id: number; note?: string | null }
+
+export type LegacyMapInput = LegacyRecordRef & {
+  itemId: string
+  /** Defaults to the archived level. */
+  level?: number
+}
+
+export type LegacyMapResult = {
+  batchId: string
+  entity: 'item-instance' | 'research'
+  created: number[]
 }
 
 export type BulkLevelInput = {
@@ -166,6 +191,32 @@ export function buildersLogState(builders: Builder[]): JsonValue {
   }
 }
 
+export function legacyLogState(record: LegacyRecord): JsonValue {
+  return {
+    kind: record.kind,
+    name: record.name,
+    category: record.category,
+    level: record.level,
+    quantity: record.quantity,
+    isUpgrading: record.isUpgrading,
+    upgradeStartedAt: iso(record.upgradeStartedAt),
+    upgradeEndsAt: iso(record.upgradeEndsAt),
+    status: record.status,
+    mappedItemId: record.mappedItemId,
+    note: record.note,
+    reconciledAt: iso(record.reconciledAt),
+    archivedAt: iso(record.archivedAt)
+  }
+}
+
+const LEGACY_ENTITY = {
+  building: 'legacy-building',
+  hero: 'legacy-hero',
+  research: 'legacy-research'
+} as const
+
+const RESEARCH_CATEGORIES: readonly string[] = ['troop', 'spell', 'siege-machine']
+
 const same = (a: JsonValue | null, b: JsonValue | null): boolean => JSON.stringify(a) === JSON.stringify(b)
 
 /** Clears every upgrade field: the recorded upgrade is ended, not finished. */
@@ -204,6 +255,22 @@ export function createEditService({ database, villageState, catalogue, townHall 
   }): void => {
     if (same(entry.before, entry.after)) return
     database.editLog.append({ villageId, batchId: null, ...entry })
+  }
+
+  /** A legacy record of this village, in the required status. */
+  const requireLegacy = (kind: LegacyKind, id: number, status: LegacyRecord['status']): LegacyRecord => {
+    if (!Object.hasOwn(LEGACY_ENTITY, kind)) {
+      throw new VillageStateValidationError('kind must be building, hero or research')
+    }
+    if (!Number.isSafeInteger(id)) throw new VillageStateValidationError('id must be an integer')
+    const record = database.legacyRecords.get(kind, id)
+    if (record === null || record.villageId !== villageId) {
+      throw new VillageStateNotFoundError(`No archived ${kind} record ${id}`)
+    }
+    if (record.status !== status) {
+      throw new VillageStateValidationError(`Archived ${kind} "${record.name}" is ${record.status}, not ${status}`)
+    }
+    return record
   }
 
   // ---------------------------------------------------------------- bulk helpers
@@ -558,6 +625,139 @@ export function createEditService({ database, villageState, catalogue, townHall 
           removed = idle.slice(0, toRemove)
         }
         return applyBulk(itemId, { updated: [], created: [], removed }, note)
+      })
+    },
+
+    mapLegacyRecord({ kind, id, itemId, level, note = null }) {
+      checkNote(note)
+      return database.transaction(() => {
+        const record = requireLegacy(kind, id, 'pending')
+        const village = database.villages.getVillage()
+        if (village === null) throw new VillageNotInitialisedError()
+        const coverage = villageState.getCoverage()
+        if (!coverage.canRecordItems) throw new CatalogueCoverageError(coverage.reason!)
+        const item = catalogue.items.find((i) => i.id === itemId)
+        if (!item) throw new VillageStateValidationError(`"${itemId}" is not in the game catalogue`)
+        if (item.gameMode !== 'home-village') {
+          throw new VillageStateValidationError('Builder Base items are not tracked yet')
+        }
+        const fits =
+          kind === 'hero'
+            ? item.category === 'hero'
+            : kind === 'research'
+              ? RESEARCH_CATEGORIES.includes(item.category)
+              : item.category !== 'hero' && INSTANCE_CATEGORIES.includes(item.category)
+        if (!fits) throw new VillageStateValidationError(`${item.name} cannot be mapped from an archived ${kind}`)
+        const limits = townHall.getItemAt(item.id, village.townHallLevel)
+        if (limits === null) throw new CatalogueCoverageError(`No Town Hall rules exist for ${item.name}`)
+        if (!limits.available) {
+          throw new VillageStateValidationError(`${item.name} unlocks at Town Hall ${limits.unlocksAtTownHall}`)
+        }
+        const targetLevel = level ?? record.level
+        if (!Number.isSafeInteger(targetLevel) || targetLevel < 1) {
+          throw new VillageStateValidationError('level must be a positive integer')
+        }
+
+        const batchId = randomUUID()
+        const before = legacyLogState(record)
+        const entries: EditLogInput[] = []
+        const created: number[] = []
+        const base = { villageId, itemId: item.id, batchId, note }
+        let entity: LegacyMapResult['entity']
+
+        if (kind === 'research') {
+          entity = 'research'
+          if (database.researchStates.getByItem(villageId, item.id) !== null) {
+            throw new VillageStateValidationError(`Research for ${item.name} is already recorded`)
+          }
+          // Idle at the chosen level; the existing research validation applies.
+          const saved = villageState.saveResearch({
+            itemId: item.id,
+            level: targetLevel,
+            targetLevel: null,
+            researchStartedAt: null,
+            researchEndsAt: null
+          })
+          created.push(saved.id)
+          entries.push({ ...base, entityType: 'research', entityId: saved.id, action: 'create', before: null, after: researchLogState(saved) })
+        } else {
+          entity = 'item-instance'
+          const used = new Set(database.villageItems.listByItem(villageId, item.id).map((i) => i.instanceNumber))
+          const inputs: VillageItemPersistInput[] = []
+          for (let n = 1; inputs.length < record.quantity; n += 1) {
+            if (used.has(n)) continue
+            inputs.push({ villageId, itemId: item.id, instanceNumber: n, level: targetLevel, ...endedUpgrade(), ...manualProvenance() })
+          }
+          for (const input of inputs) validateVillageItemInput(input)
+          const violations = findTownHallViolations(
+            [...database.villageItems.listByVillage(villageId), ...inputs],
+            database.researchStates.listByVillage(villageId),
+            townHall,
+            village.townHallLevel,
+            nameOf
+          )
+          if (violations.length > 0) {
+            throw new VillageStateValidationError(
+              `This mapping would leave the village above Town Hall ${village.townHallLevel} limits: ${violations.join('; ')}`
+            )
+          }
+          for (const input of inputs) {
+            const saved = database.villageItems.create(input)
+            created.push(saved.id)
+            entries.push({ ...base, entityType: 'item-instance', entityId: saved.id, action: 'create', before: null, after: itemLogState(saved) })
+          }
+        }
+
+        database.legacyRecords.markConverted(kind, id, item.id, note ?? `Mapped manually to ${item.name}`)
+        const converted = database.legacyRecords.get(kind, id)!
+        entries.unshift({
+          ...base,
+          entityType: LEGACY_ENTITY[kind],
+          entityId: id,
+          action: 'map',
+          before,
+          after: {
+            ...(legacyLogState(converted) as { [key: string]: JsonValue }),
+            created: { entity, ids: created },
+            legacyWasUpgrading: record.isUpgrading
+          }
+        })
+        database.editLog.appendMany(entries)
+        return { batchId, entity, created }
+      })
+    },
+
+    dismissLegacyRecord({ kind, id, note = null }) {
+      checkNote(note)
+      database.transaction(() => {
+        const record = requireLegacy(kind, id, 'pending')
+        database.legacyRecords.markDismissed(kind, id, note)
+        log({
+          entityType: LEGACY_ENTITY[kind],
+          entityId: id,
+          itemId: null,
+          action: 'dismiss',
+          before: legacyLogState(record),
+          after: legacyLogState(database.legacyRecords.get(kind, id)!),
+          note
+        })
+      })
+    },
+
+    restoreLegacyRecord({ kind, id, note = null }) {
+      checkNote(note)
+      database.transaction(() => {
+        const record = requireLegacy(kind, id, 'dismissed')
+        database.legacyRecords.markRestored(kind, id, note)
+        log({
+          entityType: LEGACY_ENTITY[kind],
+          entityId: id,
+          itemId: null,
+          action: 'update',
+          before: legacyLogState(record),
+          after: legacyLogState(database.legacyRecords.get(kind, id)!),
+          note
+        })
       })
     }
   }

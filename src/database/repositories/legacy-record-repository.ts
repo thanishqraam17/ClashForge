@@ -130,6 +130,36 @@ export class LegacyRecordRepository {
       throw new Error(`Legacy ${kind} ${id} is not pending`)
     }
   }
+
+  /** pending -> dismissed. Only reconciliation fields change. */
+  markDismissed(kind: LegacyKind, id: number, note: string | null): void {
+    const result = this.db
+      .prepare(
+        `UPDATE ${TABLES[kind]} SET reconciliation_status = 'dismissed', reconciliation_note = ?, reconciled_at = ?
+         WHERE id = ? AND reconciliation_status = 'pending'`
+      )
+      .run(note, new Date().toISOString(), id)
+    if (result.changes !== 1) {
+      throw new Error(`Legacy ${kind} ${id} is not pending`)
+    }
+  }
+
+  /**
+   * dismissed -> pending. Clears the dismissal's reconciliation metadata and
+   * keeps the restore reason as the note. Converted records cannot be restored.
+   */
+  markRestored(kind: LegacyKind, id: number, note: string | null): void {
+    const result = this.db
+      .prepare(
+        `UPDATE ${TABLES[kind]} SET reconciliation_status = 'pending', mapped_item_id = NULL,
+           reconciliation_note = ?, reconciled_at = NULL
+         WHERE id = ? AND reconciliation_status = 'dismissed'`
+      )
+      .run(note, id)
+    if (result.changes !== 1) {
+      throw new Error(`Legacy ${kind} ${id} is not dismissed`)
+    }
+  }
 }
 
 export function createLegacyRecordRepository(db: Database.Database): LegacyRecordRepository {
