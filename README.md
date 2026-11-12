@@ -24,7 +24,6 @@ npm run dev
 - `src/shared/ipc` — the IPC contract (channel names, DTOs, `IpcResult` error codes) and payload validation, shared by all three processes.
 - `src/domain` — pure domain types and validation.
 - `src/database` — SQLite client, migrations and repositories (main process only).
-
 - `src/game-data` — versioned, bundled game catalogue (`manifest.json`, `items.json`). Test-only synthetic data lives in `src/game-data/fixtures`.
 - `src/services` — pure services built on domain data (e.g. the catalogue query service).
 
