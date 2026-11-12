@@ -121,55 +121,110 @@ describe('matchInstances: removed upgrading instances (audit N1)', () => {
 })
 
 describe('matchInstances: invariants (seeded random cases)', () => {
-  it('every interpretation uses the exact exported multiset and gives every instance one fate', () => {
-    let seed = 12345
-    const rnd = (n: number) => {
-      seed = (seed * 1103515245 + 12345) % 2147483648
-      return seed % n
+  /**
+   * mulberry32: a small, well-distributed, deterministic generator. (A plain
+   * `seed % n` linear congruential generator repeats its low bits and barely
+   * varies levels; see the coverage assertions below.)
+   */
+  function generator(seed: number) {
+    let state = seed
+    return (n: number): number => {
+      state = (state + 0x6d2b79f5) | 0
+      let t = Math.imul(state ^ (state >>> 15), 1 | state)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return Math.floor((((t ^ (t >>> 14)) >>> 0) / 4294967296) * n)
     }
-    let ambiguous = 0
-    for (let c = 0; c < 3000; c += 1) {
+  }
+
+  /** Provenance groups: different source, confirmation and confidence bands. */
+  const PROVENANCE: Array<{ source: StateSource; confidence: number; confirmed: boolean }> = [
+    { source: 'manual', confidence: 1, confirmed: true },
+    { source: 'manual', confidence: 1, confirmed: false },
+    { source: 'timer-estimate', confidence: 0.3, confirmed: false },
+    { source: 'data-export', confidence: 0.95, confirmed: true },
+    { source: 'data-export', confidence: 0.5, confirmed: false }
+  ]
+
+  it('holds every matching invariant over varied villages, and the generator really varies', () => {
+    const rnd = generator(20261112)
+    const coverage = {
+      currentLevels: new Set<number>(),
+      exportedLevels: new Set<number>(),
+      exportSizes: new Set<number>(),
+      provenanceGroups: new Set<number>(),
+      upgrading: 0,
+      idle: 0,
+      ambiguous: 0,
+      blocked: 0
+    }
+
+    for (let c = 0; c < 5000; c += 1) {
       nextId = 1
       const current: VillageItemInstance[] = []
-      for (let i = 1, n = rnd(5); i <= n; i += 1) {
-        const level = 1 + rnd(4)
-        const group = rnd(3)
-        current.push(
-          inst(i, level, {
-            target: rnd(3) === 0 ? level + 1 : undefined,
-            source: group === 2 ? 'timer-estimate' : 'manual',
-            confirmed: group !== 1,
-            confidence: group === 2 ? 0.3 : 1
-          })
-        )
+      for (let n = 1, size = 1 + rnd(6); n <= size; n += 1) {
+        const level = 1 + rnd(5)
+        const group = rnd(PROVENANCE.length)
+        const upgrading = rnd(3) === 0
+        coverage.currentLevels.add(level)
+        coverage.provenanceGroups.add(group)
+        if (upgrading) coverage.upgrading += 1
+        else coverage.idle += 1
+        current.push(inst(n, level, { ...PROVENANCE[group]!, target: upgrading ? level + 1 : undefined }))
       }
-      const exported = Array.from({ length: rnd(6) }, () => 1 + rnd(5))
-      const first = matchInstances(exported, current)
-      expect(JSON.stringify(matchInstances(exported, current))).toBe(JSON.stringify(first))
-      if (first.kind !== 'outcomes') continue
-      expect(first.outcomes.length).toBeGreaterThan(0)
-      if (first.outcomes.length > 1) ambiguous += 1
-      for (const ops of first.outcomes) {
+      const exported = Array.from({ length: rnd(8) }, () => 1 + rnd(5))
+      coverage.exportSizes.add(exported.length)
+      for (const level of exported) coverage.exportedLevels.add(level)
+
+      const result = matchInstances(exported, current)
+      // Deterministic: the same input gives exactly the same result.
+      expect(JSON.stringify(matchInstances(exported, current))).toBe(JSON.stringify(result))
+      if (result.kind === 'too-many') {
+        coverage.blocked += 1
+        continue
+      }
+      expect(result.outcomes.length).toBeGreaterThan(0)
+      if (result.outcomes.length > 1) coverage.ambiguous += 1
+
+      // Distinct interpretations.
+      const keys = result.outcomes.map((o) => JSON.stringify(o))
+      expect(new Set(keys).size).toBe(keys.length)
+
+      for (const ops of result.outcomes) {
+        // Exact exported multiplicities.
         expect(ops.finalLevels.map((f) => f.level).sort()).toEqual([...exported].sort())
-        const decided = new Set([
-          ...ops.stillUpgrading.map((x) => x.instanceId),
-          ...ops.completions.map((x) => x.instanceId),
-          ...ops.levelChanges.map((x) => x.instanceId),
-          ...ops.removals.map((x) => x.instanceId),
-          ...ops.finalLevels.filter((f) => f.instanceId !== null).map((f) => f.instanceId!)
-        ])
-        expect([...decided].sort((a, b) => a - b)).toEqual(current.map((i) => i.id).sort((a, b) => a - b))
-        const removedOrKept = ops.removals.length + ops.finalLevels.filter((f) => f.instanceId !== null).length
-        expect(removedOrKept).toBe(current.length)
+        // Additions and removals match the difference in counts.
+        expect(ops.removals.length).toBe(Math.max(0, current.length - exported.length))
+        expect(ops.additions.length).toBe(Math.max(0, exported.length - current.length))
+        // Exactly one fate per recorded instance: it either survives (once) or is removed (once).
+        const survivors = ops.finalLevels.filter((f) => f.instanceId !== null).map((f) => f.instanceId!)
+        const removed = ops.removals.map((r) => r.instanceId)
+        const fates = [...survivors, ...removed].sort((a, b) => a - b)
+        expect(fates).toEqual(current.map((i) => i.id).sort((a, b) => a - b))
+        // Completions only to the recorded target; still-upgrading only for upgrading instances.
         for (const done of ops.completions) {
           expect(current.find((i) => i.id === done.instanceId)!.targetLevel).toBe(done.toLevel)
         }
-        const numbers = ops.additions.map((a) => a.instanceNumber)
+        for (const still of ops.stillUpgrading) {
+          expect(current.find((i) => i.id === still.instanceId)!.targetLevel).toBe(still.targetLevel)
+        }
+        // Unique instance numbers: additions never collide with each other or with recorded instances.
+        const numbers = ops.finalLevels.map((f) => f.instanceNumber)
         expect(new Set(numbers).size).toBe(numbers.length)
-        for (const n of numbers) expect(current.some((i) => i.instanceNumber === n)).toBe(false)
+        for (const added of ops.additions) {
+          expect(current.some((i) => i.instanceNumber === added.instanceNumber)).toBe(false)
+        }
       }
     }
-    expect(ambiguous).toBeGreaterThan(50)
+
+    // Coverage: fail if the generator stops exercising the space.
+    expect([...coverage.currentLevels].sort()).toEqual([1, 2, 3, 4, 5])
+    expect([...coverage.exportedLevels].sort()).toEqual([1, 2, 3, 4, 5])
+    expect([...coverage.exportSizes].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7])
+    expect(coverage.provenanceGroups.size).toBe(PROVENANCE.length)
+    expect(coverage.upgrading).toBeGreaterThan(1000)
+    expect(coverage.idle).toBeGreaterThan(1000)
+    expect(coverage.ambiguous).toBeGreaterThan(500)
+    expect(coverage.blocked).toBeGreaterThan(0) // the eight-interpretation cap is reached
   })
 })
 
