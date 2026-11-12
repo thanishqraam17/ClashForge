@@ -267,7 +267,11 @@ export function validateResearchStateInput(input: ResearchStatePersistInput): vo
 // Snapshots: immutable records of the village state at a point in time
 // ---------------------------------------------------------------------------
 
-export const SNAPSHOT_SCHEMA_VERSION = 1
+/**
+ * Version 2 adds builder assignment and the raw imported timer to items.
+ * Version 1 snapshots are never rewritten: those fields are simply absent.
+ */
+export const SNAPSHOT_SCHEMA_VERSION = 2
 
 /** Plain, JSON-serialisable copy of the village state. Timestamps are ISO strings. */
 export type VillageSnapshotPayload = {
@@ -298,6 +302,12 @@ export type VillageSnapshotPayload = {
     upgradeStartedAt: string | null
     upgradeEndsAt: string | null
     builderSlot: number | null
+    /** Since schema version 2; absent in version 1 snapshots. */
+    builderAssignment?: BuilderAssignment | null
+    /** Since schema version 2; absent in version 1 snapshots. */
+    upgradeObservedTimer?: number | null
+    /** Since schema version 2; absent in version 1 snapshots. */
+    upgradeObservedAt?: string | null
     source: StateSource
     confidence: number
     confirmedAt: string | null
@@ -372,6 +382,9 @@ export function buildSnapshotPayload(state: {
       upgradeStartedAt: iso(item.upgradeStartedAt),
       upgradeEndsAt: iso(item.upgradeEndsAt),
       builderSlot: item.builderId === null ? null : (slotById.get(item.builderId) ?? null),
+      builderAssignment: item.builderAssignment,
+      upgradeObservedTimer: item.upgradeObservedTimer,
+      upgradeObservedAt: iso(item.upgradeObservedAt),
       source: item.source,
       confidence: item.confidence,
       confirmedAt: iso(item.confirmedAt)

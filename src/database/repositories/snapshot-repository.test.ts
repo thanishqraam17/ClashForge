@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LOCAL_VILLAGE_ID } from '../../domain/village'
 import { VillageStateValidationError } from '../../domain/village-state'
@@ -59,7 +60,7 @@ describe('SnapshotRepository', () => {
       villageId: 1,
       source: 'manual',
       dataVersion: '0.1.1',
-      schemaVersion: 1
+      schemaVersion: 2
     })
     expect(snapshot.capturedAt.toISOString()).toBe('2026-11-12T12:00:00.000Z')
     expect(snapshot.payload.village).toMatchObject({ townHallLevel: 5, source: 'manual', confidence: 1 })
@@ -73,6 +74,9 @@ describe('SnapshotRepository', () => {
         upgradeStartedAt: '2026-11-12T08:00:00.000Z',
         upgradeEndsAt: null,
         builderSlot: 2,
+        builderAssignment: 'assigned',
+        upgradeObservedTimer: null,
+        upgradeObservedAt: null,
         source: 'timer-estimate',
         confidence: 0.6,
         confirmedAt: null
@@ -104,6 +108,29 @@ describe('SnapshotRepository', () => {
     expect(reread.payload.items[0]).toMatchObject({ level: 3, targetLevel: 4 })
     expect(second.payload.village.townHallLevel).toBe(6)
     expect(second.payload.items[0]).toMatchObject({ level: 4, targetLevel: null })
+  })
+
+  it('reads version 1 snapshots unchanged, without inventing new fields', () => {
+    const raw = new Database(t.dbPath)
+    const v1Payload = {
+      village: { townHallLevel: 5 },
+      builders: [],
+      items: [{ itemId: 'test-cannon', instanceNumber: 1, level: 3, builderSlot: null }],
+      research: []
+    }
+    const id = Number(
+      raw
+        .prepare(
+          `INSERT INTO village_snapshots (village_id, captured_at, source, data_version, schema_version, payload, created_at)
+           VALUES (1, '2026-11-01T00:00:00.000Z', 'manual', '0.1.0', 1, ?, '2026-11-01T00:00:00.000Z')`
+        )
+        .run(JSON.stringify(v1Payload)).lastInsertRowid
+    )
+    raw.close()
+    const snapshot = t.database.snapshots.getById(id)!
+    expect(snapshot.schemaVersion).toBe(1)
+    expect(snapshot.payload.items[0]).toEqual(v1Payload.items[0])
+    expect('builderAssignment' in snapshot.payload.items[0]!).toBe(false)
   })
 
   it('returns a fresh copy on every read', () => {
