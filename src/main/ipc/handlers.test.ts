@@ -17,6 +17,7 @@ import { createCatalogueService } from '../../services/catalogue-service'
 import { createTownHallService } from '../../services/town-hall-service'
 import { createVillageStateService } from '../../services/village-state-service'
 import { createImportService } from '../../services/import-service'
+import { createEditService } from '../../services/edit-service'
 import { loadBundledGameData } from '../../game-data'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
 
@@ -80,6 +81,7 @@ describe('IPC handlers', () => {
       townHall,
       assets,
       villageState,
+      edits: createEditService({ database, villageState, catalogue: sampleCatalogue, townHall }),
       imports: createImportService({
         database,
         catalogue: sampleCatalogue,
@@ -356,6 +358,7 @@ describe('IPC handlers', () => {
       townHall: emptyTownHall,
       assets,
       villageState: emptyVillageState,
+      edits: createEditService({ database, villageState: emptyVillageState, catalogue: empty, townHall: emptyTownHall }),
       imports: createImportService({
         database,
         catalogue: empty,
@@ -513,6 +516,49 @@ describe('IPC handlers', () => {
     }
     const missing = handlers['import:discard']({ id: 999 })
     expect(missing.ok ? 'ok' : missing.error.code).toBe('NOT_FOUND')
+  })
+
+  it('logs every manual edit made through the existing channels', () => {
+    const entries = () => database.editLog.list(1).map((e) => `${e.entityType}:${e.action}`)
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 6 }))
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 6, gold: 5 }))
+    const [builder] = expectOk(handlers['builders:set-count']({ count: 1 }))
+    const cannon = expectOk(
+      handlers['village-items:save']({
+        itemId: 'test-cannon', instanceNumber: 1, level: 3, targetLevel: null,
+        upgradeStartedAt: null, upgradeEndsAt: null, builderId: null
+      })
+    )
+    expectOk(
+      handlers['village-items:save']({
+        id: cannon.id, itemId: 'test-cannon', instanceNumber: 1, level: 3, targetLevel: 4,
+        upgradeStartedAt: null, upgradeEndsAt: null, builderId: builder!.id
+      })
+    )
+    expectOk(handlers['research:save']({ itemId: 'test-archer', level: 1, targetLevel: null, researchStartedAt: null, researchEndsAt: null }))
+    expectOk(handlers['research:remove']({ itemId: 'test-archer' }))
+    expectOk(handlers['village-items:remove']({ id: cannon.id }))
+    expect(entries().reverse()).toEqual([
+      'village:create',
+      'village:update',
+      'builders:set-count',
+      'item-instance:create',
+      'item-instance:update',
+      'research:create',
+      'research:delete',
+      'item-instance:delete'
+    ])
+  })
+
+  it('writes nothing to the log when a manual edit is rejected', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 6 }))
+    const before = database.editLog.list(1).length
+    const rejected = handlers['village-items:save']({
+      itemId: 'test-cannon', instanceNumber: 1, level: 9, targetLevel: null,
+      upgradeStartedAt: null, upgradeEndsAt: null, builderId: null
+    })
+    expect(rejected.ok ? 'ok' : rejected.error.code).toBe('VALIDATION_ERROR')
+    expect(database.editLog.list(1)).toHaveLength(before)
   })
 
   it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {

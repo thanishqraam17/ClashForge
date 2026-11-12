@@ -7,6 +7,7 @@ import { loadBundledGameData } from '../game-data'
 import { createAssetService } from '../services/asset-service'
 import { createCatalogueService } from '../services/catalogue-service'
 import { createImportService, ImportInvalidError } from '../services/import-service'
+import { createEditService } from '../services/edit-service'
 import { MAX_EXPORT_BYTES } from '../import/export-parser'
 import { createAssetFileStore } from './assets/asset-file-store'
 import { handleAssetProtocol, registerAssetSchemePrivileges } from './assets/asset-protocol'
@@ -125,6 +126,12 @@ app.whenReady().then(() => {
       townHall,
       assets,
       villageState,
+      edits: createEditService({
+        database: appDatabase,
+        villageState,
+        catalogue: gameData.catalogue,
+        townHall
+      }),
       imports: createImportService({
         database: appDatabase,
         catalogue: gameData.catalogue,

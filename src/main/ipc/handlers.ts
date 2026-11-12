@@ -1,5 +1,7 @@
 import type { ClashForgeDatabase } from '../../database/client/database'
 import type { AssetService } from '../../services/asset-service'
+import type { EditService } from '../../services/edit-service'
+import { EditLogValidationError } from '../../domain/edit-log'
 import {
   ImportApplyError,
   ImportInvalidError,
@@ -11,7 +13,7 @@ import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
 import { UpgradeHistoryValidationError } from '../../domain/upgrade-history'
 import { LOCAL_VILLAGE_ID, VillageValidationError } from '../../domain/village'
-import { manualProvenance, VillageStateValidationError } from '../../domain/village-state'
+import { VillageStateValidationError } from '../../domain/village-state'
 import {
   CatalogueCoverageError,
   VillageNotInitialisedError,
@@ -85,7 +87,8 @@ const DOMAIN_VALIDATION_ERRORS = [
   VillageValidationError,
   UpgradeHistoryValidationError,
   TownHallRangeError,
-  VillageStateValidationError
+  VillageStateValidationError,
+  EditLogValidationError
 ]
 
 function toDate(value: string): Date {
@@ -151,6 +154,8 @@ export type IpcHandlerDependencies = {
   townHall: TownHallService
   assets: AssetService
   villageState: VillageStateService
+  /** Every manual edit goes through here, so it is validated and logged. */
+  edits: EditService
   imports: ImportService
   /** Reads clipboard text (main process). */
   readClipboardText: () => string
@@ -165,6 +170,7 @@ export function createIpcHandlers({
   townHall,
   assets,
   villageState,
+  edits,
   imports,
   readClipboardText,
   pickExportFile,
@@ -188,11 +194,7 @@ export function createIpcHandlers({
 
     'village:save': wrap('village:save', logger, (payload) => {
       const input = parseVillageSaveInput(payload)
-      const village = database.villages.upsertVillage({
-        ...input,
-        lastScannedAt: toDateOrNull(input.lastScannedAt),
-        ...manualProvenance()
-      })
+      const village = edits.saveVillage({ ...input, lastScannedAt: toDateOrNull(input.lastScannedAt) })
       return toVillageDto(village)
     }),
 
@@ -288,7 +290,7 @@ export function createIpcHandlers({
 
     'village-items:save': wrap('village-items:save', logger, (payload) => {
       const input = parseVillageItemSaveInput(payload)
-      const saved = villageState.saveItemInstance({
+      const saved = edits.saveItemInstance({
         ...input,
         upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
         upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
@@ -297,17 +299,17 @@ export function createIpcHandlers({
     }),
 
     'village-items:remove': wrap('village-items:remove', logger, (payload) => {
-      villageState.removeItemInstance(parseIdInput(payload).id)
+      edits.removeItemInstance(parseIdInput(payload).id)
       return null
     }),
 
     'builders:set-count': wrap('builders:set-count', logger, (payload) => {
-      return villageState.setBuilderCount(parseBuildersSetCountInput(payload).count).map(toBuilderDto)
+      return edits.setBuilderCount(parseBuildersSetCountInput(payload).count).map(toBuilderDto)
     }),
 
     'research:save': wrap('research:save', logger, (payload) => {
       const input = parseResearchSaveInput(payload)
-      const saved = villageState.saveResearch({
+      const saved = edits.saveResearch({
         ...input,
         researchStartedAt: toDateOrNull(input.researchStartedAt),
         researchEndsAt: toDateOrNull(input.researchEndsAt)
@@ -316,7 +318,7 @@ export function createIpcHandlers({
     }),
 
     'research:remove': wrap('research:remove', logger, (payload) => {
-      villageState.removeResearch(parseResearchRemoveInput(payload).itemId)
+      edits.removeResearch(parseResearchRemoveInput(payload).itemId)
       return null
     }),
 
