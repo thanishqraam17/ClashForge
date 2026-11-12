@@ -25,4 +25,19 @@ npm run dev
 - `src/domain` — pure domain types and validation.
 - `src/database` — SQLite client, migrations and repositories (main process only).
 
+- `src/game-data` — versioned, bundled game catalogue (`manifest.json`, `items.json`). Test-only synthetic data lives in `src/game-data/fixtures`.
+- `src/services` — pure services built on domain data (e.g. the catalogue query service).
+
 Every IPC call returns `{ ok: true, data }` or `{ ok: false, error: { code, message } }`. Timestamps cross the boundary as ISO 8601 UTC strings. Payloads are validated in main before reaching a repository, and only the app's own renderer is accepted as a sender.
+
+## Game data
+
+The catalogue in `src/game-data` is validated on load (`src/domain/catalogue-validation.ts`) and by tests, so a malformed dataset cannot ship.
+
+- **Item IDs** are lowercase kebab-case, globally unique and never renamed once released. Builder Base items use the `bb-` prefix.
+- **Every item cites at least one source** declared in `manifest.json`.
+- **`validationStatus`** is `unverified`, `partial` or `verified`. Anything short of `verified` must list its `knownOmissions`; the app surfaces these instead of implying the data is complete.
+- **Bump `datasetVersion`** and add a changelog entry for every data change.
+- The app flags the dataset as stale after 90 days.
+
+The bundled catalogue currently has **no items**: real values are only added after they have been cross-checked against at least two sources.
