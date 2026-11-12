@@ -385,6 +385,11 @@ export type ImportApplyInput = {
   acceptedChangeIds: string[]
   /** One decision per conflict on an accepted change, keyed `kind:recordId`. */
   conflictResolutions: Record<string, 'keep-current' | 'apply-export'>
+  /**
+   * The chosen interpretation id for every accepted `ambiguous-instances`
+   * change, keyed by change id. Optional when no ambiguous change is accepted.
+   */
+  ambiguityChoices?: Record<string, string>
 }
 
 export type ImportListInput = { limit?: number }

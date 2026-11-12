@@ -412,6 +412,53 @@ describe('IPC handlers', () => {
     expect(expectOk(handlers['village-state:get'](undefined))!.items).toHaveLength(2)
   })
 
+  it('accepts ambiguity choices over IPC and validates them', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 5 }))
+    const [builder] = expectOk(handlers['builders:set-count']({ count: 1 }))
+    const save = (instanceNumber: number, targetLevel: number | null) =>
+      expectOk(
+        handlers['village-items:save']({
+          itemId: 'test-cannon',
+          instanceNumber,
+          level: 3,
+          targetLevel,
+          upgradeStartedAt: null,
+          upgradeEndsAt: null,
+          builderId: targetLevel === null ? null : builder!.id
+        })
+      )
+    save(1, 4)
+    save(2, null)
+    const text = JSON.stringify({
+      tag: '#X',
+      timestamp: 9,
+      buildings: [{ data: 900000003, lvl: 3, cnt: 1 }, { data: 900000003, lvl: 4, cnt: 1 }]
+    })
+    const preview = expectOk(handlers['import:preview-text']({ text }))
+    const ambiguousId = 'instances:test-cannon:ambiguous'
+    expect(preview.plan.changes.map((c) => c.kind)).toEqual(['ambiguous-instances'])
+
+    const base = { importId: preview.importId, acceptedChangeIds: [ambiguousId], conflictResolutions: {} }
+    for (const payload of [
+      { ...base, ambiguityChoices: 'i1' },
+      { ...base, ambiguityChoices: { [ambiguousId]: 1 } },
+      { ...base, ambiguityChoices: { [ambiguousId]: '' } }
+    ]) {
+      const result = handlers['import:apply'](payload)
+      expect(result.ok ? 'ok' : result.error.code, JSON.stringify(payload)).toBe('VALIDATION_ERROR')
+    }
+    const missing = handlers['import:apply'](base)
+    expect(missing.ok ? 'ok' : missing.error.message).toBe(`Change "${ambiguousId}" needs a chosen interpretation`)
+
+    const applied = expectOk(handlers['import:apply']({ ...base, ambiguityChoices: { [ambiguousId]: 'i2' } }))
+    expect(applied.status).toBe('applied')
+    const items = expectOk(handlers['village-state:get'](undefined))!.items
+    expect(items.map((i) => [i.instanceNumber, i.level, i.targetLevel])).toEqual([
+      [1, 4, null],
+      [2, 3, null]
+    ])
+  })
+
   it('reads the clipboard and files in the main process', () => {
     expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 5 }))
     clipboardText = JSON.stringify({ tag: '#X', timestamp: 5, buildings: [] })

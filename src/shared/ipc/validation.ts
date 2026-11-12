@@ -403,7 +403,11 @@ export function parseImportPreviewTextInput(value: unknown): ImportPreviewTextIn
 }
 
 export function parseImportApplyInput(value: unknown): ImportApplyInput {
-  const f = asObject(value, ['importId', 'acceptedChangeIds', 'conflictResolutions'], 'import apply')
+  const f = asObject(
+    value,
+    ['importId', 'acceptedChangeIds', 'conflictResolutions', 'ambiguityChoices'],
+    'import apply'
+  )
   const ids = f['acceptedChangeIds']
   if (
     !Array.isArray(ids) ||
@@ -425,10 +429,33 @@ export function parseImportApplyInput(value: unknown): ImportApplyInput {
   ) {
     throw new IpcInputError('each conflict resolution must be keep-current or apply-export')
   }
+  let ambiguityChoices: Record<string, string> = {}
+  if (f['ambiguityChoices'] !== undefined) {
+    const choices = f['ambiguityChoices']
+    if (typeof choices !== 'object' || choices === null || Array.isArray(choices)) {
+      throw new IpcInputError('ambiguityChoices must be an object')
+    }
+    const choiceEntries = Object.entries(choices as Record<string, unknown>)
+    if (
+      choiceEntries.length > MAX_ACCEPTED_CHANGES ||
+      !choiceEntries.every(
+        ([key, v]) =>
+          key.length > 0 &&
+          key.length <= MAX_CHANGE_ID_LENGTH &&
+          typeof v === 'string' &&
+          v.length > 0 &&
+          v.length <= MAX_CHANGE_ID_LENGTH
+      )
+    ) {
+      throw new IpcInputError('each ambiguity choice must map a change id to an interpretation id')
+    }
+    ambiguityChoices = Object.fromEntries(choiceEntries) as Record<string, string>
+  }
   return {
     importId: positiveInt(f, 'importId'),
     acceptedChangeIds: ids as string[],
-    conflictResolutions: Object.fromEntries(entries) as ImportApplyInput['conflictResolutions']
+    conflictResolutions: Object.fromEntries(entries) as ImportApplyInput['conflictResolutions'],
+    ambiguityChoices
   }
 }
 
