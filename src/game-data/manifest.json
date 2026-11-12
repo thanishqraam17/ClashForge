@@ -1,21 +1,30 @@
 {
-  "datasetVersion": "0.1.0",
+  "datasetVersion": "0.1.1",
   "gameVersion": null,
   "releasedAt": "2026-11-12",
   "validationStatus": "unverified",
   "knownOmissions": [
     "No catalogue items yet: item data must be collected and cross-checked against at least two sources before it is added.",
-    "Town Hall availability, maximum levels and quantities (Phase 3).",
-    "Upgrade costs, durations and prerequisites (Phase 8).",
-    "Asset references (Phase 4).",
+    "Town Hall availability, maximum levels and quantities.",
+    "Upgrade costs, durations and prerequisites.",
+    "Item artwork.",
     "Builder Base."
   ],
   "sources": [],
   "changelog": [
     {
+      "version": "0.1.1",
+      "date": "2026-11-12",
+      "changes": [
+        "Reworded known omissions for display in the app."
+      ]
+    },
+    {
       "version": "0.1.0",
       "date": "2026-11-12",
-      "changes": ["Initial dataset structure with an empty item catalogue."]
+      "changes": [
+        "Initial dataset structure with an empty item catalogue."
+      ]
     }
   ]
 }
