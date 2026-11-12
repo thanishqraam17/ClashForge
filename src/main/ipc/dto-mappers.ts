@@ -80,6 +80,7 @@ export function toBuilderDto(builder: BuilderState): BuilderDto {
     id: builder.id,
     slot: builder.slot,
     assignedItemInstanceId: builder.assignedItemInstanceId,
+    status: builder.status,
     ...provenance(builder)
   }
 }
@@ -94,6 +95,9 @@ export function toVillageItemDto(item: VillageItemInstance): VillageItemDto {
     upgradeStartedAt: isoOrNull(item.upgradeStartedAt),
     upgradeEndsAt: isoOrNull(item.upgradeEndsAt),
     builderId: item.builderId,
+    builderAssignment: item.builderAssignment,
+    upgradeObservedTimer: item.upgradeObservedTimer,
+    upgradeObservedAt: isoOrNull(item.upgradeObservedAt),
     ...provenance(item)
   }
 }
@@ -129,6 +133,7 @@ export function toVillageStateDto(state: VillageState): VillageStateDto {
     village: toVillageDto(state.village),
     coverage: toCoverageDto(state.coverage),
     builders: state.builders.map(toBuilderDto),
+    builderAvailability: { ...state.builderAvailability },
     items: state.items.map(toVillageItemDto),
     research: state.research.map(toResearchStateDto),
     activeResearchItemId: state.activeResearch?.itemId ?? null,

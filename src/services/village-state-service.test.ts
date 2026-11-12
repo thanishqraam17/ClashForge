@@ -167,6 +167,127 @@ describe('VillageStateService with sample data', () => {
   })
 })
 
+describe('VillageStateService builder availability', () => {
+  let t: TestDatabase
+  let service: VillageStateService
+
+  beforeEach(() => {
+    t = createTestDatabase({ withVillage: true })
+    service = createVillageStateService({
+      database: t.database,
+      catalogue: sampleCatalogue,
+      townHall: createTownHallService(sampleCatalogue, sampleRules)
+    })
+  })
+
+  afterEach(() => t.cleanup())
+
+  /** An imported upgrade whose builder the export did not reveal. */
+  function importedUnknownUpgrade(instanceNumber: number) {
+    return t.database.villageItems.create({
+      villageId: 1,
+      itemId: 'test-cannon',
+      instanceNumber,
+      level: 3,
+      targetLevel: 4,
+      upgradeStartedAt: null,
+      upgradeEndsAt: null,
+      builderId: null,
+      builderAssignment: 'unknown',
+      upgradeObservedTimer: 600,
+      upgradeObservedAt: new Date('2026-11-12T11:00:25.000Z'),
+      source: 'data-export',
+      confidence: 0.5,
+      confirmedAt: null
+    })
+  }
+
+  it('reports confirmed availability when every upgrade has a known builder', () => {
+    const [b1] = service.setBuilderCount(3)
+    service.saveItemInstance(item({ targetLevel: 4, builderId: b1!.id }))
+    const state = service.getState()!
+    expect(state.builders.map((b) => b.status)).toEqual(['busy', 'free', 'free'])
+    expect(state.builderAvailability).toEqual({
+      total: 3,
+      busyAssigned: 1,
+      busyUnassigned: 0,
+      freeMin: 2,
+      freeMax: 2,
+      isConfirmed: true,
+      inconsistent: false
+    })
+  })
+
+  it('never reports a builder as free while an upgrade has an unknown builder', () => {
+    service.setBuilderCount(3)
+    importedUnknownUpgrade(1)
+    const state = service.getState()!
+    expect(state.builders.map((b) => b.status)).toEqual([
+      'possibly-busy',
+      'possibly-busy',
+      'possibly-busy'
+    ])
+    expect(state.builderAvailability).toMatchObject({
+      busyAssigned: 0,
+      busyUnassigned: 1,
+      freeMin: 2,
+      freeMax: 3,
+      isConfirmed: false,
+      inconsistent: false
+    })
+  })
+
+  it('flags more unknown-builder upgrades than idle builders', () => {
+    service.setBuilderCount(1)
+    importedUnknownUpgrade(1)
+    importedUnknownUpgrade(2)
+    expect(service.getState()!.builderAvailability).toMatchObject({
+      freeMin: 0,
+      freeMax: 1,
+      inconsistent: true
+    })
+  })
+
+  it('is not confirmed while a recorded assignment is unconfirmed', () => {
+    const [b1] = service.setBuilderCount(2)
+    service.saveItemInstance(item({ targetLevel: 4, builderId: b1!.id }), {
+      source: 'timer-estimate',
+      confidence: 0.6,
+      confirmedAt: null
+    })
+    const state = service.getState()!
+    expect(state.items[0]!.builderAssignment).toBe('assigned')
+    expect(state.builderAvailability).toMatchObject({ freeMin: 1, freeMax: 1, isConfirmed: false })
+  })
+
+  it('ignores Laboratory research', () => {
+    const village = t.database.villages.getVillage()!
+    t.database.villages.updateVillage({ ...village, townHallLevel: 6 })
+    service.setBuilderCount(2)
+    service.saveResearch({
+      itemId: 'test-archer',
+      level: 2,
+      targetLevel: 3,
+      researchStartedAt: null,
+      researchEndsAt: null
+    })
+    expect(service.getState()!.builderAvailability).toMatchObject({
+      busyAssigned: 0,
+      freeMin: 2,
+      freeMax: 2,
+      isConfirmed: true
+    })
+  })
+
+  it('still requires a free, confirmed builder for manual upgrades', () => {
+    service.setBuilderCount(1)
+    importedUnknownUpgrade(1)
+    expect(() =>
+      service.saveItemInstance(item({ instanceNumber: 2, targetLevel: 4, builderId: null }))
+    ).toThrow('an active upgrade must be assigned to a builder')
+  })
+})
+
 describe('VillageStateService with the empty bundled catalogue', () => {
   let t: TestDatabase
   let service: VillageStateService

@@ -165,6 +165,19 @@ export type BuilderDto = ProvenanceDto & {
   id: number
   slot: number
   assignedItemInstanceId: number | null
+  /** `possibly-busy`: idle on record but an upgrade with an unknown builder exists. */
+  status: 'busy' | 'free' | 'possibly-busy'
+}
+
+/** Show `freeMin`–`freeMax`; present it as estimated unless `isConfirmed`. */
+export type BuilderAvailabilityDto = {
+  total: number
+  busyAssigned: number
+  busyUnassigned: number
+  freeMin: number
+  freeMax: number
+  isConfirmed: boolean
+  inconsistent: boolean
 }
 
 export type VillageItemDto = ProvenanceDto & {
@@ -176,6 +189,10 @@ export type VillageItemDto = ProvenanceDto & {
   upgradeStartedAt: IsoTimestamp | null
   upgradeEndsAt: IsoTimestamp | null
   builderId: number | null
+  builderAssignment: 'confirmed' | 'assigned' | 'unknown' | null
+  /** Raw imported timer (seconds, as exported) and the export time; null unless imported. */
+  upgradeObservedTimer: number | null
+  upgradeObservedAt: IsoTimestamp | null
 }
 
 export type ResearchStateDto = ProvenanceDto & {
@@ -205,6 +222,7 @@ export type VillageStateDto = {
   village: VillageDto
   coverage: CatalogueCoverageDto
   builders: BuilderDto[]
+  builderAvailability: BuilderAvailabilityDto
   items: VillageItemDto[]
   research: ResearchStateDto[]
   activeResearchItemId: string | null

@@ -74,15 +74,48 @@ export type CatalogueCoverage = {
   reason: string | null
 }
 
+/**
+ * - `busy`: working on a recorded upgrade.
+ * - `free`: idle, and every active upgrade has a known builder.
+ * - `possibly-busy`: idle on record, but some upgrade's builder is unknown,
+ *   so this builder may be the one doing it.
+ */
+export type BuilderStatus = 'busy' | 'free' | 'possibly-busy'
+
 export type BuilderState = Builder & {
   /** Item instance this builder is upgrading, or null when idle. */
   assignedItemInstanceId: number | null
+  status: BuilderStatus
+}
+
+/**
+ * Builder availability, separating what is confirmed from what is estimated.
+ * Laboratory research never affects it.
+ */
+export type BuilderAvailability = {
+  total: number
+  /** Upgrades with a recorded builder (confirmed or assigned). */
+  busyAssigned: number
+  /** Upgrades whose builder is unknown (imported data). */
+  busyUnassigned: number
+  /** Lowest possible number of free builders. */
+  freeMin: number
+  /** Highest possible number of free builders. */
+  freeMax: number
+  /**
+   * True only when nothing is estimated: no unknown builders, every builder
+   * row confirmed, and every recorded assignment confirmed.
+   */
+  isConfirmed: boolean
+  /** More unknown-builder upgrades than idle builders: the builder count is likely out of date. */
+  inconsistent: boolean
 }
 
 export type VillageState = {
   village: Village
   coverage: CatalogueCoverage
   builders: BuilderState[]
+  builderAvailability: BuilderAvailability
   items: VillageItemInstance[]
   research: ResearchState[]
   activeResearch: ResearchState | null
@@ -133,6 +166,28 @@ export type VillageStateServiceDependencies = {
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
+
+export function summariseBuilderAvailability(
+  builders: BuilderState[],
+  items: VillageItemInstance[]
+): BuilderAvailability {
+  const upgrading = items.filter((item) => item.targetLevel !== null)
+  const busyAssigned = upgrading.filter((item) => item.builderId !== null).length
+  const busyUnassigned = upgrading.filter((item) => item.builderAssignment === 'unknown').length
+  const idle = builders.length - busyAssigned
+  return {
+    total: builders.length,
+    busyAssigned,
+    busyUnassigned,
+    freeMin: Math.max(0, idle - busyUnassigned),
+    freeMax: Math.max(0, idle),
+    isConfirmed:
+      busyUnassigned === 0 &&
+      builders.every((builder) => builder.confirmedAt !== null) &&
+      upgrading.every((item) => item.builderAssignment === 'confirmed'),
+    inconsistent: busyUnassigned > idle
+  }
+}
 
 export function createVillageStateService({
   database,
@@ -218,10 +273,16 @@ export function createVillageStateService({
     const assigned = new Map(
       items.filter((item) => item.builderId !== null).map((item) => [item.builderId!, item.id])
     )
-    return database.builders.listByVillage(villageId).map((builder) => ({
-      ...builder,
-      assignedItemInstanceId: assigned.get(builder.id) ?? null
-    }))
+    const anyUnknown = items.some((item) => item.builderAssignment === 'unknown')
+    return database.builders.listByVillage(villageId).map((builder) => {
+      const assignedItemInstanceId = assigned.get(builder.id) ?? null
+      return {
+        ...builder,
+        assignedItemInstanceId,
+        status:
+          assignedItemInstanceId !== null ? 'busy' : anyUnknown ? 'possibly-busy' : 'free'
+      }
+    })
   }
 
   return {
@@ -232,10 +293,12 @@ export function createVillageStateService({
       if (village === null) return null
       const items = database.villageItems.listByVillage(villageId)
       const latest = database.snapshots.getLatest(villageId)
+      const builders = builderStates(items)
       return {
         village,
         coverage: getCoverage(),
-        builders: builderStates(items),
+        builders,
+        builderAvailability: summariseBuilderAvailability(builders, items),
         items,
         research: database.researchStates.listByVillage(villageId),
         activeResearch: database.researchStates.getActive(villageId),
