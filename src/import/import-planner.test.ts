@@ -304,6 +304,21 @@ describe('buildImportPlan', () => {
     )
   })
 
+  it('turns a level decrease into a decision (audit N2)', () => {
+    addCannons([5])
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }] }))
+    expect(change(p, 'instances:test-cannon:levels')).toMatchObject({
+      requiresIndividualAcceptance: true,
+      conflicts: [expect.objectContaining({ kind: 'item-decrease', currentLevel: 5, targetLevel: 3 })]
+    })
+  })
+
+  it('keeps level increases automatic', () => {
+    addCannons([3])
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 5, cnt: 1 }] }))
+    expect(change(p, 'instances:test-cannon:levels')).toMatchObject({ requiresIndividualAcceptance: false, conflicts: [] })
+  })
+
   it('blocks changes that break Town Hall limits', () => {
     const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 9, cnt: 1 }, { data: ID.knight, lvl: 1, cnt: 1 }] }))
     expect(change(p, 'instances:test-cannon:add').blockedReason).toBe(

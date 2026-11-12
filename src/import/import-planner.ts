@@ -38,8 +38,17 @@ export const UNTOUCHED_BY_IMPORT = ['resources', 'storage capacities', 'builder 
 
 export type ChangeBasis = 'observed' | 'inferred'
 
+/**
+ * A planned effect that needs an explicit decision (keep-current or
+ * apply-export):
+ * - `item-upgrade` / `research`: the export would end or replace an active
+ *   upgrade or research; `targetLevel` is the recorded upgrade target.
+ * - `item-decrease` / `research-decrease`: the export shows a LOWER level
+ *   than recorded, which the game never does on its own; `targetLevel` is
+ *   the exported (lower) level.
+ */
 export type UpgradeConflict = {
-  kind: 'item-upgrade' | 'research'
+  kind: 'item-upgrade' | 'research' | 'item-decrease' | 'research-decrease'
   /** Village item instance id, or research row id. */
   recordId: number
   itemId: string
@@ -497,6 +506,19 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
         exportEffect: `set level to ${entry.level} and end the recorded research`
       })
     }
+    if (existing && entry.level < existing.level) {
+      conflicts.push({
+        kind: 'research-decrease',
+        recordId: existing.id,
+        itemId,
+        instanceNumber: null,
+        currentLevel: existing.level,
+        targetLevel: entry.level,
+        source: existing.source,
+        builderAssignment: null,
+        exportEffect: `lower the research level from ${existing.level} to ${entry.level}`
+      })
+    }
     const limits = limitsAt(itemId)
     changes.push({
       id: `research:${itemId}`,
@@ -554,6 +576,7 @@ export function describeOperations(itemName: string, ops: InstanceOperations): s
     ...ops.levelChanges.map(
       (c) =>
         `${itemName} #${c.instanceNumber}: level ${c.fromLevel} → ${c.toLevel}` +
+        (c.toLevel < c.fromLevel ? ' (a decrease)' : '') +
         (c.endsUpgrade ? ' (its recorded upgrade is dropped)' : '')
     ),
     ...ops.removals.map(
@@ -659,9 +682,24 @@ function planInstances(args: {
   const addId = `instances:${item.id}:add`
 
   if (ops.levelChanges.length > 0) {
-    const conflicts = ops.levelChanges.flatMap((c) =>
-      conflictFor(c.instanceId, `set level to ${c.toLevel} and end the recorded upgrade`)
-    )
+    const conflicts = ops.levelChanges.flatMap((c) => {
+      const found = conflictFor(c.instanceId, `set level to ${c.toLevel} and end the recorded upgrade`)
+      const instance = byId.get(c.instanceId)
+      if (instance && c.toLevel < c.fromLevel) {
+        found.push({
+          kind: 'item-decrease',
+          recordId: instance.id,
+          itemId: item.id,
+          instanceNumber: instance.instanceNumber,
+          currentLevel: c.fromLevel,
+          targetLevel: c.toLevel,
+          source: instance.source,
+          builderAssignment: instance.builderAssignment,
+          exportEffect: `lower the level from ${c.fromLevel} to ${c.toLevel}`
+        })
+      }
+      return found
+    })
     changes.push({
       ...base,
       id: levelsId,

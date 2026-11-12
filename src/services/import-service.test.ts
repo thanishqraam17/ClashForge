@@ -405,13 +405,16 @@ describe('ImportService', () => {
       })
 
       it('applies when the village fits the new Town Hall', () => {
-        const { importId } = imports.previewText(
+        const { importId, plan } = imports.previewText(
           exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }, { data: ID.cannon, lvl: 2, cnt: 2 }] })
         )
+        // Lowering levels 6 -> 2 are decreases, so each needs an explicit decision.
+        const levels = plan.changes.find((c) => c.id === 'instances:test-cannon:levels')!
+        expect(levels.conflicts.map((c) => c.kind)).toEqual(['item-decrease', 'item-decrease'])
         imports.apply({
           importId,
           acceptedChangeIds: ['town-hall', 'instances:test-cannon:levels', 'instances:test-cannon:remove'],
-          conflictResolutions: {}
+          conflictResolutions: Object.fromEntries(levels.conflicts.map((c) => [conflictKey(c), 'apply-export' as const]))
         })
         expect(t.database.villages.getVillage()!.townHallLevel).toBe(2)
         expect(cannons().map((c) => c.level)).toEqual([2, 2])
@@ -422,6 +425,39 @@ describe('ImportService', () => {
       const { importId } = imports.previewText(exportText({ buildings: [{ data: ID.hall, lvl: 6, cnt: 1 }] }))
       imports.apply({ importId, acceptedChangeIds: ['town-hall'], conflictResolutions: {} })
       expect(t.database.villages.getVillage()!.townHallLevel).toBe(6)
+    })
+
+    describe('level decreases (audit N2)', () => {
+      it('applies a decrease only with an explicit decision', () => {
+        addCannons([5, 5])
+        const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 2 }] }))
+        const levels = plan.changes.find((c) => c.id === 'instances:test-cannon:levels')!
+        const [first, second] = levels.conflicts
+        expect(() => imports.apply({ importId, acceptedChangeIds: [levels.id], conflictResolutions: {} })).toThrow(
+          /needs a resolution/
+        )
+        imports.apply({
+          importId,
+          acceptedChangeIds: [levels.id],
+          conflictResolutions: { [conflictKey(first!)]: 'keep-current', [conflictKey(second!)]: 'apply-export' }
+        })
+        expect(cannons().map((c) => c.level)).toEqual([5, 3])
+      })
+
+      it('needs a decision for a lower research level, and keep-current keeps it', () => {
+        const village = t.database.villages.getVillage()!
+        t.database.villages.updateVillage({ ...village, townHallLevel: 6 })
+        villageState.saveResearch({ itemId: 'test-archer', level: 3, targetLevel: null, researchStartedAt: null, researchEndsAt: null })
+        const { importId, plan } = imports.previewText(exportText({ units: [{ data: ID.archer, lvl: 1 }] }))
+        const change = plan.changes.find((c) => c.id === 'research:test-archer')!
+        expect(change.conflicts.map((c) => c.kind)).toEqual(['research-decrease'])
+        imports.apply({
+          importId,
+          acceptedChangeIds: [change.id],
+          conflictResolutions: { [conflictKey(change.conflicts[0]!)]: 'keep-current' }
+        })
+        expect(t.database.researchStates.getByItem(LOCAL_VILLAGE_ID, 'test-archer')!.level).toBe(3)
+      })
     })
 
     it('protects active research and applies research levels', () => {

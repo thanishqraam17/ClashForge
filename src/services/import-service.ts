@@ -242,10 +242,12 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
             ...ops.stillUpgrading.map((o) => o.instanceId)
           ]
           for (const id of touched) {
-            if (`item-upgrade:${id}` in conflictResolutions) {
-              throw new ImportApplyError(
-                `Conflict "item-upgrade:${id}" contradicts the chosen interpretation, which already decides it`
-              )
+            for (const kind of ['item-upgrade', 'item-decrease']) {
+              if (`${kind}:${id}` in conflictResolutions) {
+                throw new ImportApplyError(
+                  `Conflict "${kind}:${id}" contradicts the chosen interpretation, which already decides it`
+                )
+              }
             }
           }
         }
@@ -318,8 +320,8 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
               break
             case 'change-levels':
               for (const target of change.instances) {
-                if (keepCurrent('item-upgrade', target.instanceId)) {
-                  keptCurrent.push(`item-upgrade:${target.instanceId}`)
+                if (keepCurrent('item-upgrade', target.instanceId) || keepCurrent('item-decrease', target.instanceId)) {
+                  keptCurrent.push(`item:${target.instanceId}`)
                   continue
                 }
                 settleInstance(target.instanceId, target.toLevel, provenance)
@@ -407,7 +409,11 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
             }
             case 'set-research': {
               const research = change.researchId !== null ? database.researchStates.getById(change.researchId) : null
-              if (research && research.targetLevel !== null && keepCurrent('research', research.id)) {
+              if (
+                research &&
+                ((research.targetLevel !== null && keepCurrent('research', research.id)) ||
+                  keepCurrent('research-decrease', research.id))
+              ) {
                 keptCurrent.push(`research:${research.id}`)
                 break
               }
