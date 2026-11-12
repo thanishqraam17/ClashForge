@@ -2,6 +2,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppShell } from '@/components/layout/AppShell'
 import { OverviewPage } from '@/pages/OverviewPage'
 import { PlaceholderPage } from '@/pages/PlaceholderPage'
+import { SettingsPage } from '@/pages/SettingsPage'
 
 export default function App(): React.JSX.Element {
   return (
@@ -36,15 +37,7 @@ export default function App(): React.JSX.Element {
               />
             }
           />
-          <Route
-            path="settings"
-            element={
-              <PlaceholderPage
-                title="Settings"
-                description="Theme, data export, and about information will be available in a later phase."
-              />
-            }
-          />
+          <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
