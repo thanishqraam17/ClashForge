@@ -3,7 +3,7 @@ import { resolveProductionDatabasePath } from '../database/client/database-path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, shell } from 'electron'
 import { readFileSync, statSync } from 'fs'
 import { join } from 'path'
-import { loadBundledGameData } from '../game-data'
+import { loadBundledGameData, type BundledGameData } from '../game-data'
 import { createAssetService } from '../services/asset-service'
 import { createCatalogueService } from '../services/catalogue-service'
 import { createImportService, ImportInvalidError } from '../services/import-service'
@@ -16,8 +16,18 @@ import { createTownHallService } from '../services/town-hall-service'
 import { createVillageStateService } from '../services/village-state-service'
 import { createIpcHandlers } from './ipc/handlers'
 import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
+import { isSampleModeRequested, SAMPLE_DATA_ARGUMENT } from './sample-data/sample-mode'
 
 const isDev = !app.isPackaged
+
+/**
+ * Decided once, before any database is opened. In production builds
+ * import.meta.env.DEV is false, so this is constant false and the sample
+ * branch below (with its dynamic import) is removed from the bundle.
+ */
+const sampleMode =
+  import.meta.env.DEV &&
+  isSampleModeRequested({ devBuild: import.meta.env.DEV, mode: import.meta.env.MODE, isPackaged: app.isPackaged })
 
 registerAssetSchemePrivileges(protocol)
 
@@ -59,7 +69,8 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      ...(sampleMode ? { additionalArguments: [SAMPLE_DATA_ARGUMENT] } : {})
     }
   })
 
@@ -79,12 +90,37 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+/**
+ * Opens the database for this launch. In sample mode only the separate sample
+ * database is opened; if preparing it fails, startup is aborted rather than
+ * falling back to the real data.
+ */
+async function openAppDatabase(): Promise<{ database: ClashForgeDatabase; dbPath: string; gameData: BundledGameData } | null> {
+  if (import.meta.env.DEV && sampleMode) {
+    try {
+      const { openSampleVillage } = await import('./sample-data/sample-seed')
+      const bundled = loadBundledGameData()
+      return openSampleVillage(app.getPath('userData'), bundled)
+    } catch (error) {
+      console.error('[ClashForge] Sample data could not be prepared; not opening any database', error)
+      dialog.showErrorBox('ClashForge sample data', 'The sample village could not be prepared. ClashForge will close.')
+      return null
+    }
+  }
   const dbPath = resolveProductionDatabasePath(app.getPath('userData'))
-  appDatabase = createDatabase({ dbPath })
+  return { database: createDatabase({ dbPath }), dbPath, gameData: loadBundledGameData() }
+}
+
+app.whenReady().then(async () => {
+  const opened = await openAppDatabase()
+  if (opened === null) {
+    app.exit(1)
+    return
+  }
+  const { dbPath, gameData } = opened
+  appDatabase = opened.database
   appDatabase.healthCheck()
 
-  const gameData = loadBundledGameData()
   const assets = createAssetService(gameData.assets)
   const townHall = createTownHallService(gameData.catalogue, gameData.townHallRules)
   const villageState = createVillageStateService({
@@ -147,7 +183,7 @@ app.whenReady().then(() => {
   )
 
   if (isDev) {
-    console.info('[ClashForge] Database ready at', dbPath)
+    console.info(`[ClashForge] ${sampleMode ? 'SAMPLE DATA database' : 'Database'} ready at`, dbPath)
   }
 
   createWindow()

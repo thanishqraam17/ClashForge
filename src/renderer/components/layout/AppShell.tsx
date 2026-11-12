@@ -24,7 +24,9 @@ const navItems: Array<{
 
 export function AppShell(): React.JSX.Element {
   return (
-    <div className="flex h-full min-h-0 bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background">
+      {window.clashForge?.sampleData === true && <SampleDataBanner />}
+      <div className="flex min-h-0 flex-1">
       <aside className="flex w-[220px] shrink-0 flex-col border-r border-border-subtle bg-surface-1">
         <div className="flex h-12 items-center border-b border-border-subtle px-4">
           <span className="text-[13px] font-semibold tracking-tight text-foreground">
@@ -68,6 +70,19 @@ export function AppShell(): React.JSX.Element {
       <main className="min-h-0 min-w-0 flex-1 overflow-auto">
         <Outlet />
       </main>
+      </div>
+    </div>
+  )
+}
+
+/** Shown on every page while the development sample village is loaded. */
+export function SampleDataBanner(): React.JSX.Element {
+  return (
+    <div
+      role="status"
+      className="shrink-0 bg-amber-500 px-4 py-1.5 text-center text-xs font-semibold tracking-wide text-black"
+    >
+      TEST DATA: sample village, not your data. Changes are discarded when the app restarts.
     </div>
   )
 }

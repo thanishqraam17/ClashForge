@@ -15,8 +15,13 @@ function invoke<C extends IpcChannel>(
   return ipcRenderer.invoke(channel, payload)
 }
 
+/** Mirrors SAMPLE_DATA_ARGUMENT in main/sample-data/sample-mode.ts. */
+const SAMPLE_DATA_ARGUMENT = '--clashforge-sample-data'
+
 const api: ClashForgeApi = {
   platform: process.platform,
+  // Constant false in production builds; only main adds this argument, in sample mode.
+  sampleData: import.meta.env.DEV && process.argv.includes(SAMPLE_DATA_ARGUMENT),
   village: {
     getCurrent: () => invoke(IPC_CHANNELS.villageGetCurrent),
     save: (input) => invoke(IPC_CHANNELS.villageSave, input)

@@ -7,7 +7,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "composite": true,
-    "types": ["node"]
+    "types": ["node", "electron-vite/node"]
   },
   "include": [
     "electron.vite.config.ts",

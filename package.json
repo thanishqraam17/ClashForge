@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "electron-vite dev",
+    "dev:sample": "electron-vite dev --mode sample",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",

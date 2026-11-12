@@ -575,6 +575,8 @@ export type IpcResponse<C extends IpcChannel> = IpcContract[C]['response']
 
 export type ClashForgeApi = {
   platform: string
+  /** True only in the development sample-data mode: the village shown is synthetic. */
+  sampleData: boolean
   village: {
     getCurrent: () => Promise<IpcResult<VillageDto | null>>
     save: (input: VillageSaveInput) => Promise<IpcResult<VillageDto>>

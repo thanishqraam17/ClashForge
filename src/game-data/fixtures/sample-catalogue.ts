@@ -1,7 +1,8 @@
 /**
  * TEST-ONLY sample catalogue. Item names, values and game data ids (9000000xx)
  * are synthetic and do not describe the real game. Never import this from
- * application code.
+ * application code; the only exception is the development sample-data seed
+ * (src/main/sample-data/sample-seed.ts), which production builds exclude.
  */
 
 export const SAMPLE_MANIFEST = {
