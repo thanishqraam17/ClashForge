@@ -263,3 +263,65 @@ export type VillageSnapshot = {
   payload: VillageSnapshotPayload
   createdAt: Date
 }
+
+/**
+ * Builds the JSON payload for a snapshot from the current state. Pure: the
+ * result shares no references with its inputs, so later changes to the live
+ * state can never alter a snapshot.
+ */
+export function buildSnapshotPayload(state: {
+  village: Omit<VillageSnapshotPayload['village'], 'lastScannedAt' | 'confirmedAt'> & {
+    lastScannedAt: Date | null
+    confirmedAt: Date | null
+  }
+  builders: Builder[]
+  items: VillageItemInstance[]
+  research: ResearchState[]
+}): VillageSnapshotPayload {
+  const iso = (date: Date | null): string | null => (date ? date.toISOString() : null)
+  const slotById = new Map(state.builders.map((builder) => [builder.id, builder.slot]))
+
+  return {
+    village: {
+      townHallLevel: state.village.townHallLevel,
+      gold: state.village.gold,
+      elixir: state.village.elixir,
+      darkElixir: state.village.darkElixir,
+      goldCapacity: state.village.goldCapacity,
+      elixirCapacity: state.village.elixirCapacity,
+      darkElixirCapacity: state.village.darkElixirCapacity,
+      lastScannedAt: iso(state.village.lastScannedAt),
+      source: state.village.source,
+      confidence: state.village.confidence,
+      confirmedAt: iso(state.village.confirmedAt)
+    },
+    builders: state.builders.map((builder) => ({
+      slot: builder.slot,
+      source: builder.source,
+      confidence: builder.confidence,
+      confirmedAt: iso(builder.confirmedAt)
+    })),
+    items: state.items.map((item) => ({
+      itemId: item.itemId,
+      instanceNumber: item.instanceNumber,
+      level: item.level,
+      targetLevel: item.targetLevel,
+      upgradeStartedAt: iso(item.upgradeStartedAt),
+      upgradeEndsAt: iso(item.upgradeEndsAt),
+      builderSlot: item.builderId === null ? null : (slotById.get(item.builderId) ?? null),
+      source: item.source,
+      confidence: item.confidence,
+      confirmedAt: iso(item.confirmedAt)
+    })),
+    research: state.research.map((entry) => ({
+      itemId: entry.itemId,
+      level: entry.level,
+      targetLevel: entry.targetLevel,
+      researchStartedAt: iso(entry.researchStartedAt),
+      researchEndsAt: iso(entry.researchEndsAt),
+      source: entry.source,
+      confidence: entry.confidence,
+      confirmedAt: iso(entry.confirmedAt)
+    }))
+  }
+}
