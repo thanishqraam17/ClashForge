@@ -182,6 +182,8 @@ describe('VillageStateService builder availability', () => {
 
   afterEach(() => t.cleanup())
 
+  const setBuilders = (n: number) => service.setBuilderCount(n)
+
   /** An imported upgrade whose builder the export did not reveal. */
   function importedUnknownUpgrade(instanceNumber: number) {
     return t.database.villageItems.create({
@@ -277,6 +279,54 @@ describe('VillageStateService builder availability', () => {
       freeMax: 2,
       isConfirmed: true
     })
+  })
+
+  it('rejects a manual upgrade when no builder is certainly free (audit F6)', () => {
+    const [b1] = setBuilders(1)
+    importedUnknownUpgrade(1)
+    expect(() =>
+      service.saveItemInstance(item({ instanceNumber: 2, targetLevel: 4, builderId: b1!.id }))
+    ).toThrow('No builder is certainly free: 1 upgrade has an unknown builder. Resolve it before starting another upgrade.')
+    expect(service.getState()!.builderAvailability).toMatchObject({ busyAssigned: 0, busyUnassigned: 1, inconsistent: false })
+  })
+
+  it('allows the manual upgrade once a builder is certainly free', () => {
+    const [b1] = setBuilders(2)
+    importedUnknownUpgrade(1)
+    service.saveItemInstance(item({ instanceNumber: 2, targetLevel: 4, builderId: b1!.id }))
+    expect(service.getState()!.builderAvailability).toMatchObject({ busyAssigned: 1, busyUnassigned: 1, freeMin: 0, inconsistent: false })
+    // Now nothing is certainly free.
+    const b2 = service.getState()!.builders[1]!
+    expect(() => service.saveItemInstance(item({ instanceNumber: 3, targetLevel: 4, builderId: b2.id }))).toThrow(
+      /No builder is certainly free/
+    )
+  })
+
+  it('still lets an existing upgrade be edited while unknown upgrades exist', () => {
+    const [b1] = setBuilders(2)
+    const upgrade = service.saveItemInstance(item({ instanceNumber: 2, targetLevel: 4, builderId: b1!.id }))
+    importedUnknownUpgrade(1)
+    expect(() =>
+      service.saveItemInstance(
+        item({ id: upgrade.id, instanceNumber: 2, targetLevel: 4, builderId: b1!.id, upgradeEndsAt: new Date('2030-01-01') })
+      )
+    ).not.toThrow()
+  })
+
+  it('lets an unknown-builder upgrade be given a builder', () => {
+    const [b1] = setBuilders(1)
+    const unknown = importedUnknownUpgrade(1)
+    service.saveItemInstance(item({ id: unknown.id, instanceNumber: 1, targetLevel: 4, builderId: b1!.id }))
+    expect(service.getState()!.builderAvailability).toMatchObject({ busyAssigned: 1, busyUnassigned: 0, isConfirmed: true })
+  })
+
+  it('refuses a builder count below the upgrades in progress', () => {
+    const [b1] = setBuilders(3)
+    service.saveItemInstance(item({ instanceNumber: 3, targetLevel: 4, builderId: b1!.id }))
+    importedUnknownUpgrade(1)
+    importedUnknownUpgrade(2)
+    expect(() => service.setBuilderCount(2)).toThrow('3 upgrades are in progress, so the village has at least 3 builders')
+    expect(service.getState()!.builders).toHaveLength(3)
   })
 
   it('still requires a free, confirmed builder for manual upgrades', () => {

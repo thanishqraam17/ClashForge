@@ -336,6 +336,24 @@ export function createVillageStateService({
               `Builder ${builder.slot} is already upgrading another item`
             )
           }
+
+          // Starting a builder upgrade needs a builder that is certainly free:
+          // upgrades with an unknown builder may be occupying any idle builder.
+          const existing = input.id === undefined ? null : database.villageItems.getById(input.id)
+          const alreadyHoldsBuilder = existing !== null && existing.builderId === builder.id
+          if (!alreadyHoldsBuilder) {
+            const others = database.villageItems
+              .listByVillage(villageId)
+              .filter((i) => i.id !== input.id && i.targetLevel !== null)
+            const busyAssigned = others.filter((i) => i.builderId !== null).length
+            const unknown = others.filter((i) => i.builderAssignment === 'unknown').length
+            const total = database.builders.listByVillage(villageId).length
+            if (busyAssigned + unknown + 1 > total) {
+              throw new VillageStateValidationError(
+                `No builder is certainly free: ${unknown} upgrade${unknown === 1 ? ' has' : 's have'} an unknown builder. Resolve ${unknown === 1 ? 'it' : 'them'} before starting another upgrade.`
+              )
+            }
+          }
         }
 
         const fields = {
@@ -391,6 +409,15 @@ export function createVillageStateService({
       }
       return database.transaction(() => {
         requireVillage()
+        const upgrading = database.villageItems.listByVillage(villageId).filter((i) => i.targetLevel !== null)
+        const needed =
+          upgrading.filter((i) => i.builderId !== null).length +
+          upgrading.filter((i) => i.builderAssignment === 'unknown').length
+        if (count < needed) {
+          throw new VillageStateValidationError(
+            `${needed} upgrades are in progress, so the village has at least ${needed} builders`
+          )
+        }
         const current = database.builders.listByVillage(villageId)
         for (const builder of current) {
           if (builder.slot > count) {
