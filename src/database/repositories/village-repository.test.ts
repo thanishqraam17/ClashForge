@@ -13,8 +13,6 @@ const sampleInput = {
   goldCapacity: 8_000_000,
   elixirCapacity: 8_000_000,
   darkElixirCapacity: 300_000,
-  builderCount: 4,
-  availableBuilders: 2,
   lastScannedAt: new Date('2026-09-14T10:00:00.000Z')
 }
 

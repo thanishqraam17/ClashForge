@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import migration001 from '../migrations/001_initial.sql?raw'
 import migration002 from '../migrations/002_upgrade_history_nullable_completed_at.sql?raw'
+import migration003 from '../migrations/003_village_state.sql?raw'
 
 /**
  * Timestamps: ISO 8601 UTC strings (e.g. 2026-09-14T10:30:00.000Z), stored as TEXT.
@@ -9,10 +10,11 @@ import migration002 from '../migrations/002_upgrade_history_nullable_completed_a
 
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   { version: 1, sql: migration001 },
-  { version: 2, sql: migration002 }
+  { version: 2, sql: migration002 },
+  { version: 3, sql: migration003 }
 ]
 
-function readAppliedVersion(db: Database.Database): number {
+export function readAppliedVersion(db: Database.Database): number {
   const table = db
     .prepare(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
@@ -43,11 +45,19 @@ function ensureSchemaVersionTable(db: Database.Database): void {
   `)
 }
 
-export function runMigrations(db: Database.Database): void {
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version
+
+export type RunMigrationsOptions = {
+  /** Stop after this version. Used by tests to build databases at older schema versions. */
+  upTo?: number
+}
+
+export function runMigrations(db: Database.Database, options: RunMigrationsOptions = {}): void {
   ensureSchemaVersionTable(db)
   const applied = readAppliedVersion(db)
+  const upTo = options.upTo ?? LATEST_SCHEMA_VERSION
 
-  const pending = MIGRATIONS.filter((m) => m.version > applied).sort(
+  const pending = MIGRATIONS.filter((m) => m.version > applied && m.version <= upTo).sort(
     (a, b) => a.version - b.version
   )
 

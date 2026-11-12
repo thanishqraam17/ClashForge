@@ -8,11 +8,8 @@ import {
   type TownHallGetItemInput,
   type TownHallGetSummaryInput,
   UPGRADE_HISTORY_ENTITY_TYPES,
-  type BuildingSaveInput,
-  type HeroSaveInput,
   type HistoryGetRecentInput,
   type HistoryRecordInput,
-  type ResearchSaveInput,
   type UpgradeHistoryEntityTypeDto,
   type VillageSaveInput
 } from './contracts'
@@ -85,14 +82,6 @@ function text(fields: Fields, key: string): string {
   return value
 }
 
-function bool(fields: Fields, key: string): boolean {
-  const value = fields[key]
-  if (typeof value !== 'boolean') {
-    throw new IpcInputError(`${key} must be a boolean`)
-  }
-  return value
-}
-
 function timestamp(fields: Fields, key: string): string {
   const value = fields[key]
   if (
@@ -131,8 +120,6 @@ const VILLAGE_KEYS = [
   'goldCapacity',
   'elixirCapacity',
   'darkElixirCapacity',
-  'builderCount',
-  'availableBuilders',
   'lastScannedAt'
 ] as const
 
@@ -146,81 +133,7 @@ export function parseVillageSaveInput(value: unknown): VillageSaveInput {
     goldCapacity: nonNegativeInt(f, 'goldCapacity'),
     elixirCapacity: nonNegativeInt(f, 'elixirCapacity'),
     darkElixirCapacity: nonNegativeInt(f, 'darkElixirCapacity'),
-    builderCount: nonNegativeInt(f, 'builderCount'),
-    availableBuilders: nonNegativeInt(f, 'availableBuilders'),
     lastScannedAt: nullableTimestamp(f, 'lastScannedAt')
-  }
-}
-
-const BUILDING_KEYS = [
-  'id',
-  'name',
-  'category',
-  'level',
-  'quantity',
-  'isUpgrading',
-  'upgradeStartedAt',
-  'upgradeEndsAt'
-] as const
-
-export function parseBuildingSaveInput(value: unknown): BuildingSaveInput {
-  const f = asObject(value, BUILDING_KEYS, 'building')
-  const id = optionalPositiveInt(f, 'id')
-  return {
-    ...(id === undefined ? {} : { id }),
-    name: text(f, 'name'),
-    category: text(f, 'category'),
-    level: nonNegativeInt(f, 'level'),
-    quantity: nonNegativeInt(f, 'quantity'),
-    isUpgrading: bool(f, 'isUpgrading'),
-    upgradeStartedAt: nullableTimestamp(f, 'upgradeStartedAt'),
-    upgradeEndsAt: nullableTimestamp(f, 'upgradeEndsAt')
-  }
-}
-
-const HERO_KEYS = [
-  'id',
-  'name',
-  'level',
-  'isUpgrading',
-  'upgradeStartedAt',
-  'upgradeEndsAt'
-] as const
-
-export function parseHeroSaveInput(value: unknown): HeroSaveInput {
-  const f = asObject(value, HERO_KEYS, 'hero')
-  const id = optionalPositiveInt(f, 'id')
-  return {
-    ...(id === undefined ? {} : { id }),
-    name: text(f, 'name'),
-    level: nonNegativeInt(f, 'level'),
-    isUpgrading: bool(f, 'isUpgrading'),
-    upgradeStartedAt: nullableTimestamp(f, 'upgradeStartedAt'),
-    upgradeEndsAt: nullableTimestamp(f, 'upgradeEndsAt')
-  }
-}
-
-const RESEARCH_KEYS = [
-  'id',
-  'name',
-  'level',
-  'category',
-  'isResearching',
-  'researchStartedAt',
-  'researchEndsAt'
-] as const
-
-export function parseResearchSaveInput(value: unknown): ResearchSaveInput {
-  const f = asObject(value, RESEARCH_KEYS, 'research')
-  const id = optionalPositiveInt(f, 'id')
-  return {
-    ...(id === undefined ? {} : { id }),
-    name: text(f, 'name'),
-    level: nonNegativeInt(f, 'level'),
-    category: text(f, 'category'),
-    isResearching: bool(f, 'isResearching'),
-    researchStartedAt: nullableTimestamp(f, 'researchStartedAt'),
-    researchEndsAt: nullableTimestamp(f, 'researchEndsAt')
   }
 }
 

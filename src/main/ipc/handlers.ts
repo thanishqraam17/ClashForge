@@ -3,9 +3,6 @@ import type { AssetService } from '../../services/asset-service'
 import type { CatalogueService } from '../../services/catalogue-service'
 import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
-import { BuildingValidationError } from '../../domain/building'
-import { HeroValidationError } from '../../domain/hero'
-import { ResearchValidationError } from '../../domain/research'
 import { UpgradeHistoryValidationError } from '../../domain/upgrade-history'
 import { LOCAL_VILLAGE_ID, VillageValidationError } from '../../domain/village'
 import {
@@ -18,26 +15,17 @@ import {
 import {
   IpcInputError,
   parseAssetsResolveInput,
-  parseBuildingSaveInput,
   parseCatalogueGetItemInput,
   parseCatalogueGetItemsInput,
   parseEmptyInput,
-  parseHeroSaveInput,
   parseHistoryGetRecentInput,
   parseHistoryRecordInput,
-  parseResearchSaveInput,
   parseTownHallCompareInput,
   parseTownHallGetItemInput,
   parseTownHallGetSummaryInput,
   parseVillageSaveInput
 } from '../../shared/ipc/validation'
-import {
-  toBuildingDto,
-  toHeroDto,
-  toResearchDto,
-  toUpgradeHistoryDto,
-  toVillageDto
-} from './dto-mappers'
+import { toUpgradeHistoryDto, toVillageDto } from './dto-mappers'
 
 /** Raised by handlers for expected failures that map to a specific error code. */
 export class IpcHandlerError extends Error {
@@ -60,9 +48,6 @@ export type IpcLogger = {
 
 const DOMAIN_VALIDATION_ERRORS = [
   VillageValidationError,
-  BuildingValidationError,
-  HeroValidationError,
-  ResearchValidationError,
   UpgradeHistoryValidationError,
   TownHallRangeError
 ]
@@ -134,17 +119,6 @@ export function createIpcHandlers({
     }
   }
 
-  /** Ensures an update targets an existing record that belongs to the local village. */
-  function requireOwnedRecord(
-    record: { villageId: number } | null,
-    kind: string,
-    id: number
-  ): void {
-    if (record === null || record.villageId !== LOCAL_VILLAGE_ID) {
-      throw new IpcHandlerError('NOT_FOUND', `${kind} ${id} does not exist`)
-    }
-  }
-
   return {
     'village:get-current': wrap('village:get-current', logger, (payload) => {
       parseEmptyInput(payload)
@@ -159,72 +133,6 @@ export function createIpcHandlers({
         lastScannedAt: toDateOrNull(input.lastScannedAt)
       })
       return toVillageDto(village)
-    }),
-
-    'buildings:list': wrap('buildings:list', logger, (payload) => {
-      parseEmptyInput(payload)
-      return database.buildings.getByVillageId(LOCAL_VILLAGE_ID).map(toBuildingDto)
-    }),
-
-    'buildings:save': wrap('buildings:save', logger, (payload) => {
-      const { id, ...input } = parseBuildingSaveInput(payload)
-      requireVillage()
-      const fields = {
-        ...input,
-        villageId: LOCAL_VILLAGE_ID,
-        upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
-        upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
-      }
-      if (id === undefined) {
-        return toBuildingDto(database.buildings.create(fields))
-      }
-      const existing = database.buildings.getById(id)
-      requireOwnedRecord(existing, 'Building', id)
-      return toBuildingDto(database.buildings.update({ ...existing!, ...fields }))
-    }),
-
-    'heroes:list': wrap('heroes:list', logger, (payload) => {
-      parseEmptyInput(payload)
-      return database.heroes.getByVillageId(LOCAL_VILLAGE_ID).map(toHeroDto)
-    }),
-
-    'heroes:save': wrap('heroes:save', logger, (payload) => {
-      const { id, ...input } = parseHeroSaveInput(payload)
-      requireVillage()
-      const fields = {
-        ...input,
-        villageId: LOCAL_VILLAGE_ID,
-        upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
-        upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
-      }
-      if (id === undefined) {
-        return toHeroDto(database.heroes.create(fields))
-      }
-      const existing = database.heroes.getById(id)
-      requireOwnedRecord(existing, 'Hero', id)
-      return toHeroDto(database.heroes.update({ ...existing!, ...fields }))
-    }),
-
-    'research:list': wrap('research:list', logger, (payload) => {
-      parseEmptyInput(payload)
-      return database.research.getByVillageId(LOCAL_VILLAGE_ID).map(toResearchDto)
-    }),
-
-    'research:save': wrap('research:save', logger, (payload) => {
-      const { id, ...input } = parseResearchSaveInput(payload)
-      requireVillage()
-      const fields = {
-        ...input,
-        villageId: LOCAL_VILLAGE_ID,
-        researchStartedAt: toDateOrNull(input.researchStartedAt),
-        researchEndsAt: toDateOrNull(input.researchEndsAt)
-      }
-      if (id === undefined) {
-        return toResearchDto(database.research.create(fields))
-      }
-      const existing = database.research.getById(id)
-      requireOwnedRecord(existing, 'Research', id)
-      return toResearchDto(database.research.update({ ...existing!, ...fields }))
     }),
 
     'history:get-recent': wrap('history:get-recent', logger, (payload) => {

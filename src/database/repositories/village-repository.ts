@@ -16,8 +16,6 @@ type VillageRow = {
   gold_capacity: number
   elixir_capacity: number
   dark_elixir_capacity: number
-  builder_count: number
-  available_builders: number
   last_scanned_at: string | null
   created_at: string
   updated_at: string
@@ -45,12 +43,12 @@ export class VillageRepository {
         `INSERT INTO villages (
           id, town_hall_level, gold, elixir, dark_elixir,
           gold_capacity, elixir_capacity, dark_elixir_capacity,
-          builder_count, available_builders, last_scanned_at,
+          last_scanned_at,
           created_at, updated_at
         ) VALUES (
           @id, @townHallLevel, @gold, @elixir, @darkElixir,
           @goldCapacity, @elixirCapacity, @darkElixirCapacity,
-          @builderCount, @availableBuilders, @lastScannedAt,
+          @lastScannedAt,
           @createdAt, @updatedAt
         )`
       )
@@ -63,8 +61,6 @@ export class VillageRepository {
         goldCapacity: input.goldCapacity,
         elixirCapacity: input.elixirCapacity,
         darkElixirCapacity: input.darkElixirCapacity,
-        builderCount: input.builderCount,
-        availableBuilders: input.availableBuilders,
         lastScannedAt: input.lastScannedAt?.toISOString() ?? null,
         createdAt: now,
         updatedAt: now
@@ -93,8 +89,6 @@ export class VillageRepository {
           gold_capacity = @goldCapacity,
           elixir_capacity = @elixirCapacity,
           dark_elixir_capacity = @darkElixirCapacity,
-          builder_count = @builderCount,
-          available_builders = @availableBuilders,
           last_scanned_at = @lastScannedAt,
           updated_at = @updatedAt
         WHERE id = @id`
@@ -108,8 +102,6 @@ export class VillageRepository {
         goldCapacity: village.goldCapacity,
         elixirCapacity: village.elixirCapacity,
         darkElixirCapacity: village.darkElixirCapacity,
-        builderCount: village.builderCount,
-        availableBuilders: village.availableBuilders,
         lastScannedAt: village.lastScannedAt?.toISOString() ?? null,
         updatedAt
       })
@@ -146,8 +138,6 @@ function mapRowToVillage(row: VillageRow): Village {
     goldCapacity: row.gold_capacity,
     elixirCapacity: row.elixir_capacity,
     darkElixirCapacity: row.dark_elixir_capacity,
-    builderCount: row.builder_count,
-    availableBuilders: row.available_builders,
     lastScannedAt: row.last_scanned_at ? new Date(row.last_scanned_at) : null,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at)

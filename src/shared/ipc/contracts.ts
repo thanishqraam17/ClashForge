@@ -25,12 +25,6 @@ import {
 export const IPC_CHANNELS = {
   villageGetCurrent: 'village:get-current',
   villageSave: 'village:save',
-  buildingsList: 'buildings:list',
-  buildingsSave: 'buildings:save',
-  heroesList: 'heroes:list',
-  heroesSave: 'heroes:save',
-  researchList: 'research:list',
-  researchSave: 'research:save',
   historyGetRecent: 'history:get-recent',
   historyRecord: 'history:record',
   catalogueGetItems: 'catalogue:get-items',
@@ -64,48 +58,7 @@ export type VillageDto = {
   goldCapacity: number
   elixirCapacity: number
   darkElixirCapacity: number
-  builderCount: number
-  availableBuilders: number
   lastScannedAt: IsoTimestamp | null
-  createdAt: IsoTimestamp
-  updatedAt: IsoTimestamp
-}
-
-export type BuildingDto = {
-  id: number
-  villageId: number
-  name: string
-  category: string
-  level: number
-  quantity: number
-  isUpgrading: boolean
-  upgradeStartedAt: IsoTimestamp | null
-  upgradeEndsAt: IsoTimestamp | null
-  createdAt: IsoTimestamp
-  updatedAt: IsoTimestamp
-}
-
-export type HeroDto = {
-  id: number
-  villageId: number
-  name: string
-  level: number
-  isUpgrading: boolean
-  upgradeStartedAt: IsoTimestamp | null
-  upgradeEndsAt: IsoTimestamp | null
-  createdAt: IsoTimestamp
-  updatedAt: IsoTimestamp
-}
-
-export type ResearchDto = {
-  id: number
-  villageId: number
-  name: string
-  level: number
-  category: string
-  isResearching: boolean
-  researchStartedAt: IsoTimestamp | null
-  researchEndsAt: IsoTimestamp | null
   createdAt: IsoTimestamp
   updatedAt: IsoTimestamp
 }
@@ -182,42 +135,7 @@ export type VillageSaveInput = {
   goldCapacity: number
   elixirCapacity: number
   darkElixirCapacity: number
-  builderCount: number
-  availableBuilders: number
   lastScannedAt: IsoTimestamp | null
-}
-
-/** Omit `id` to create; provide an existing `id` to update. */
-export type BuildingSaveInput = {
-  id?: number
-  name: string
-  category: string
-  level: number
-  quantity: number
-  isUpgrading: boolean
-  upgradeStartedAt: IsoTimestamp | null
-  upgradeEndsAt: IsoTimestamp | null
-}
-
-/** Omit `id` to create; provide an existing `id` to update. */
-export type HeroSaveInput = {
-  id?: number
-  name: string
-  level: number
-  isUpgrading: boolean
-  upgradeStartedAt: IsoTimestamp | null
-  upgradeEndsAt: IsoTimestamp | null
-}
-
-/** Omit `id` to create; provide an existing `id` to update. */
-export type ResearchSaveInput = {
-  id?: number
-  name: string
-  level: number
-  category: string
-  isResearching: boolean
-  researchStartedAt: IsoTimestamp | null
-  researchEndsAt: IsoTimestamp | null
 }
 
 export type HistoryGetRecentInput = {
@@ -298,12 +216,6 @@ export type IpcResult<T> = { ok: true; data: T } | { ok: false; error: IpcError 
 export type IpcContract = {
   'village:get-current': { request: void; response: VillageDto | null }
   'village:save': { request: VillageSaveInput; response: VillageDto }
-  'buildings:list': { request: void; response: BuildingDto[] }
-  'buildings:save': { request: BuildingSaveInput; response: BuildingDto }
-  'heroes:list': { request: void; response: HeroDto[] }
-  'heroes:save': { request: HeroSaveInput; response: HeroDto }
-  'research:list': { request: void; response: ResearchDto[] }
-  'research:save': { request: ResearchSaveInput; response: ResearchDto }
   'history:get-recent': { request: HistoryGetRecentInput | void; response: UpgradeHistoryDto[] }
   'history:record': { request: HistoryRecordInput; response: UpgradeHistoryDto }
   'catalogue:get-items': {
@@ -332,18 +244,6 @@ export type ClashForgeApi = {
   village: {
     getCurrent: () => Promise<IpcResult<VillageDto | null>>
     save: (input: VillageSaveInput) => Promise<IpcResult<VillageDto>>
-  }
-  buildings: {
-    list: () => Promise<IpcResult<BuildingDto[]>>
-    save: (input: BuildingSaveInput) => Promise<IpcResult<BuildingDto>>
-  }
-  heroes: {
-    list: () => Promise<IpcResult<HeroDto[]>>
-    save: (input: HeroSaveInput) => Promise<IpcResult<HeroDto>>
-  }
-  research: {
-    list: () => Promise<IpcResult<ResearchDto[]>>
-    save: (input: ResearchSaveInput) => Promise<IpcResult<ResearchDto>>
   }
   history: {
     getRecent: (input?: HistoryGetRecentInput) => Promise<IpcResult<UpgradeHistoryDto[]>>

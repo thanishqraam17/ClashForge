@@ -16,8 +16,6 @@ function seedVillage(dbPath: string) {
     goldCapacity: 0,
     elixirCapacity: 0,
     darkElixirCapacity: 0,
-    builderCount: 4,
-    availableBuilders: 4,
     lastScannedAt: null
   })
   return database

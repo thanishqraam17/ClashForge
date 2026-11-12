@@ -46,8 +46,6 @@ const villageInput: VillageSaveInput = {
   goldCapacity: 8_000_000,
   elixirCapacity: 8_000_000,
   darkElixirCapacity: 300_000,
-  builderCount: 4,
-  availableBuilders: 2,
   lastScannedAt: '2026-09-14T10:30:00.000Z'
 }
 
@@ -118,124 +116,6 @@ describe('IPC handlers', () => {
         expect(result.error.code).toBe('VALIDATION_ERROR')
       }
     }
-  })
-
-  it('surfaces domain validation errors as VALIDATION_ERROR', () => {
-    expectOk(handlers['village:save'](villageInput))
-    const result = handlers['buildings:save']({
-      name: 'Army Camp',
-      category: 'ARMY',
-      level: 7,
-      quantity: 1,
-      isUpgrading: false,
-      upgradeStartedAt: '2026-09-15T08:00:00.000Z',
-      upgradeEndsAt: '2026-09-14T08:00:00.000Z'
-    })
-    expect(result).toEqual({
-      ok: false,
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'upgradeEndsAt cannot be before upgradeStartedAt'
-      }
-    })
-  })
-
-  it('requires a village before saving village items', () => {
-    const result = handlers['heroes:save']({
-      name: 'Barbarian King',
-      level: 30,
-      isUpgrading: false,
-      upgradeStartedAt: null,
-      upgradeEndsAt: null
-    })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.code).toBe('VILLAGE_NOT_INITIALISED')
-    }
-  })
-
-  it('creates and updates buildings, heroes and research', () => {
-    expectOk(handlers['village:save'](villageInput))
-
-    const building = expectOk(
-      handlers['buildings:save']({
-        name: 'Army Camp',
-        category: 'ARMY',
-        level: 7,
-        quantity: 1,
-        isUpgrading: true,
-        upgradeStartedAt: '2026-09-14T08:00:00.000Z',
-        upgradeEndsAt: '2026-09-15T08:00:00.000Z'
-      })
-    )
-    expect(building.villageId).toBe(1)
-    const updatedBuilding = expectOk(
-      handlers['buildings:save']({
-        id: building.id,
-        name: 'Army Camp',
-        category: 'ARMY',
-        level: 8,
-        quantity: 1,
-        isUpgrading: false,
-        upgradeStartedAt: null,
-        upgradeEndsAt: null
-      })
-    )
-    expect(updatedBuilding).toMatchObject({ id: building.id, level: 8, upgradeEndsAt: null })
-    expect(expectOk(handlers['buildings:list'](undefined))).toHaveLength(1)
-
-    const hero = expectOk(
-      handlers['heroes:save']({
-        name: 'Archer Queen',
-        level: 30,
-        isUpgrading: false,
-        upgradeStartedAt: null,
-        upgradeEndsAt: null
-      })
-    )
-    expectOk(
-      handlers['heroes:save']({
-        id: hero.id,
-        name: 'Archer Queen',
-        level: 31,
-        isUpgrading: false,
-        upgradeStartedAt: null,
-        upgradeEndsAt: null
-      })
-    )
-    expect(expectOk(handlers['heroes:list'](undefined))[0]?.level).toBe(31)
-
-    const research = expectOk(
-      handlers['research:save']({
-        name: 'Balloon',
-        category: 'TROOP',
-        level: 5,
-        isResearching: true,
-        researchStartedAt: null,
-        researchEndsAt: '2026-09-20T00:00:00.000Z'
-      })
-    )
-    expect(research.researchEndsAt).toBe('2026-09-20T00:00:00.000Z')
-    expect(expectOk(handlers['research:list'](undefined))).toHaveLength(1)
-  })
-
-  it('returns NOT_FOUND when updating a record that does not exist', () => {
-    expectOk(handlers['village:save'](villageInput))
-    const result = handlers['buildings:save']({
-      id: 999,
-      name: 'Cannon',
-      category: 'DEFENSE',
-      level: 1,
-      quantity: 1,
-      isUpgrading: false,
-      upgradeStartedAt: null,
-      upgradeEndsAt: null
-    })
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.code).toBe('NOT_FOUND')
-    }
-    expect(expectOk(handlers['buildings:list'](undefined))).toHaveLength(0)
   })
 
   it('records history and returns the most recent entries with a limit', () => {

@@ -21,18 +21,6 @@ const api: ClashForgeApi = {
     getCurrent: () => invoke(IPC_CHANNELS.villageGetCurrent),
     save: (input) => invoke(IPC_CHANNELS.villageSave, input)
   },
-  buildings: {
-    list: () => invoke(IPC_CHANNELS.buildingsList),
-    save: (input) => invoke(IPC_CHANNELS.buildingsSave, input)
-  },
-  heroes: {
-    list: () => invoke(IPC_CHANNELS.heroesList),
-    save: (input) => invoke(IPC_CHANNELS.heroesSave, input)
-  },
-  research: {
-    list: () => invoke(IPC_CHANNELS.researchList),
-    save: (input) => invoke(IPC_CHANNELS.researchSave, input)
-  },
   history: {
     getRecent: (input) => invoke(IPC_CHANNELS.historyGetRecent, input),
     record: (input) => invoke(IPC_CHANNELS.historyRecord, input)

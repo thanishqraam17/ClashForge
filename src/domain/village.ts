@@ -10,8 +10,6 @@ export type Village = {
   goldCapacity: number
   elixirCapacity: number
   darkElixirCapacity: number
-  builderCount: number
-  availableBuilders: number
   lastScannedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -25,8 +23,6 @@ export type VillagePersistInput = {
   goldCapacity: number
   elixirCapacity: number
   darkElixirCapacity: number
-  builderCount: number
-  availableBuilders: number
   lastScannedAt: Date | null
 }
 
@@ -58,11 +54,5 @@ export function validateVillagePersistInput(input: VillagePersistInput): void {
   }
   if (input.darkElixirCapacity < 0) {
     throw new VillageValidationError('darkElixirCapacity cannot be negative')
-  }
-  if (input.builderCount < 0) {
-    throw new VillageValidationError('builderCount cannot be negative')
-  }
-  if (input.availableBuilders < 0) {
-    throw new VillageValidationError('availableBuilders cannot be negative')
   }
 }
