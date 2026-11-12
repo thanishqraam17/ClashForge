@@ -1,4 +1,6 @@
+import type { ExportImport } from '../../database/repositories/import-repository'
 import type { LegacyRecord } from '../../database/repositories/legacy-record-repository'
+import type { ImportPlanSummary } from '../../services/import-service'
 import type { UpgradeHistory } from '../../domain/upgrade-history'
 import type {
   Provenance,
@@ -15,6 +17,7 @@ import type { Village } from '../../domain/village'
 import type {
   BuilderDto,
   CatalogueCoverageDto,
+  ExportImportDto,
   LegacyRecordDto,
   ProvenanceDto,
   ResearchStateDto,
@@ -164,5 +167,20 @@ export function toLegacyRecordDto(record: LegacyRecord): LegacyRecordDto {
     note: record.note,
     reconciledAt: isoOrNull(record.reconciledAt),
     archivedAt: isoOrNull(record.archivedAt)
+  }
+}
+
+export function toExportImportDto(record: ExportImport): ExportImportDto {
+  return {
+    id: record.id,
+    exportTimestamp: record.exportTimestamp,
+    status: record.status,
+    dataVersion: record.dataVersion,
+    semanticsVersion: record.semanticsVersion,
+    previewedAt: iso(record.previewedAt),
+    appliedAt: isoOrNull(record.appliedAt),
+    discardedAt: isoOrNull(record.discardedAt),
+    summary: record.summary as ImportPlanSummary,
+    applyResult: record.applyResult
   }
 }

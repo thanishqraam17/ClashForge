@@ -1,10 +1,13 @@
 import { createDatabase, type ClashForgeDatabase } from '../database/client/database'
 import { resolveProductionDatabasePath } from '../database/client/database-path'
-import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, protocol, shell } from 'electron'
+import { readFileSync, statSync } from 'fs'
 import { join } from 'path'
 import { loadBundledGameData } from '../game-data'
 import { createAssetService } from '../services/asset-service'
 import { createCatalogueService } from '../services/catalogue-service'
+import { createImportService, ImportInvalidError } from '../services/import-service'
+import { MAX_EXPORT_BYTES } from '../import/export-parser'
 import { createAssetFileStore } from './assets/asset-file-store'
 import { handleAssetProtocol, registerAssetSchemePrivileges } from './assets/asset-protocol'
 import { reconcileLegacyRecords } from '../services/legacy-reconciliation-service'
@@ -19,6 +22,28 @@ registerAssetSchemePrivileges(protocol)
 
 let appDatabase: ClashForgeDatabase | null = null
 let unregisterIpc: (() => void) | null = null
+
+/**
+ * File picker for data exports. Runs in the main process so the renderer never
+ * gets file system access. The file size is checked before it is read.
+ */
+function pickExportFile(): string | null {
+  const window = BrowserWindow.getFocusedWindow()
+  const options = {
+    title: 'Import village data export',
+    properties: ['openFile' as const],
+    filters: [
+      { name: 'Data export', extensions: ['json', 'txt'] },
+      { name: 'All files', extensions: ['*'] }
+    ]
+  }
+  const paths = window ? dialog.showOpenDialogSync(window, options) : dialog.showOpenDialogSync(options)
+  if (!paths || paths.length === 0) return null
+  if (statSync(paths[0]!).size > MAX_EXPORT_BYTES) {
+    throw new ImportInvalidError([{ path: 'export', message: `is larger than ${MAX_EXPORT_BYTES} bytes` }])
+  }
+  return readFileSync(paths[0]!, 'utf8')
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -99,7 +124,16 @@ app.whenReady().then(() => {
       catalogue: createCatalogueService(gameData.catalogue),
       townHall,
       assets,
-      villageState
+      villageState,
+      imports: createImportService({
+        database: appDatabase,
+        catalogue: gameData.catalogue,
+        semantics: gameData.exportSemantics,
+        townHall,
+        villageState
+      }),
+      readClipboardText: () => clipboard.readText(),
+      pickExportFile
     }),
     createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
   )

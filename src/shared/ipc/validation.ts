@@ -4,6 +4,9 @@ import {
   type CatalogueGetItemInput,
   type AssetsResolveInput,
   type BuildersSetCountInput,
+  type ImportApplyInput,
+  type ImportListInput,
+  type ImportPreviewTextInput,
   type IdInput,
   type LegacyListInput,
   type ResearchRemoveInput,
@@ -384,6 +387,59 @@ export function parseLegacyListInput(value: unknown): LegacyListInput {
     throw new IpcInputError(`status must be one of: ${RECONCILIATION_STATUS_VALUES.join(', ')}`)
   }
   return { status: status as LegacyListInput['status'] }
+}
+
+/** Generous transport limit; the parser enforces the real 1 MB export limit. */
+const MAX_IMPORT_TEXT_CHARS = 2_000_000
+const MAX_ACCEPTED_CHANGES = 1_000
+const MAX_CHANGE_ID_LENGTH = 200
+
+export function parseImportPreviewTextInput(value: unknown): ImportPreviewTextInput {
+  const f = asObject(value, ['text'], 'import')
+  const textValue = f['text']
+  if (typeof textValue !== 'string') throw new IpcInputError('text must be a string')
+  if (textValue.length > MAX_IMPORT_TEXT_CHARS) throw new IpcInputError('text is too large')
+  return { text: textValue }
+}
+
+export function parseImportApplyInput(value: unknown): ImportApplyInput {
+  const f = asObject(value, ['importId', 'acceptedChangeIds', 'conflictResolutions'], 'import apply')
+  const ids = f['acceptedChangeIds']
+  if (
+    !Array.isArray(ids) ||
+    ids.length > MAX_ACCEPTED_CHANGES ||
+    !ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= MAX_CHANGE_ID_LENGTH)
+  ) {
+    throw new IpcInputError('acceptedChangeIds must be a list of change ids')
+  }
+  const resolutions = f['conflictResolutions']
+  if (typeof resolutions !== 'object' || resolutions === null || Array.isArray(resolutions)) {
+    throw new IpcInputError('conflictResolutions must be an object')
+  }
+  const entries = Object.entries(resolutions as Record<string, unknown>)
+  if (
+    entries.length > MAX_ACCEPTED_CHANGES ||
+    !entries.every(
+      ([key, v]) => key.length <= MAX_CHANGE_ID_LENGTH && (v === 'keep-current' || v === 'apply-export')
+    )
+  ) {
+    throw new IpcInputError('each conflict resolution must be keep-current or apply-export')
+  }
+  return {
+    importId: positiveInt(f, 'importId'),
+    acceptedChangeIds: ids as string[],
+    conflictResolutions: Object.fromEntries(entries) as ImportApplyInput['conflictResolutions']
+  }
+}
+
+export function parseImportListInput(value: unknown): ImportListInput {
+  if (value === undefined || value === null) return {}
+  const f = asObject(value, ['limit'], 'import list')
+  const limit = optionalPositiveInt(f, 'limit')
+  if (limit !== undefined && limit > SNAPSHOT_LIST_MAX) {
+    throw new IpcInputError(`limit must be at most ${SNAPSHOT_LIST_MAX}`)
+  }
+  return limit === undefined ? {} : { limit }
 }
 
 /** For channels that take no payload: reject anything other than undefined/null. */

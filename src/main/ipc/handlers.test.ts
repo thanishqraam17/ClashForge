@@ -16,6 +16,8 @@ import { createAssetService } from '../../services/asset-service'
 import { createCatalogueService } from '../../services/catalogue-service'
 import { createTownHallService } from '../../services/town-hall-service'
 import { createVillageStateService } from '../../services/village-state-service'
+import { createImportService } from '../../services/import-service'
+import { loadBundledGameData } from '../../game-data'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
 
 const sampleCatalogue = parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS)
@@ -61,18 +63,32 @@ describe('IPC handlers', () => {
   let dir: string
   let database: ClashForgeDatabase
   let handlers: IpcHandlerMap
+  let clipboardText: string
+  let pickedFile: string | null
   const logger = { error: vi.fn() }
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
     database = createDatabase({ dbPath: join(dir, 'test.db') })
     logger.error.mockReset()
+    const villageState = createVillageStateService({ database, catalogue: sampleCatalogue, townHall })
+    clipboardText = ''
+    pickedFile = null
     handlers = createIpcHandlers({
       database,
       catalogue,
       townHall,
       assets,
-      villageState: createVillageStateService({ database, catalogue: sampleCatalogue, townHall }),
+      villageState,
+      imports: createImportService({
+        database,
+        catalogue: sampleCatalogue,
+        semantics: loadBundledGameData().exportSemantics,
+        townHall,
+        villageState
+      }),
+      readClipboardText: () => clipboardText,
+      pickExportFile: () => pickedFile,
       logger
     })
   })
@@ -332,12 +348,22 @@ describe('IPC handlers', () => {
       empty,
       parseTownHallRules({ maxTownHall: { 'home-village': null, 'builder-base': null }, items: [] }, empty)
     )
+    const emptyVillageState = createVillageStateService({ database, catalogue: empty, townHall: emptyTownHall })
     const emptyHandlers = createIpcHandlers({
       database,
       catalogue: createCatalogueService(empty),
       townHall: emptyTownHall,
       assets,
-      villageState: createVillageStateService({ database, catalogue: empty, townHall: emptyTownHall }),
+      villageState: emptyVillageState,
+      imports: createImportService({
+        database,
+        catalogue: empty,
+        semantics: loadBundledGameData().exportSemantics,
+        townHall: emptyTownHall,
+        villageState: emptyVillageState
+      }),
+      readClipboardText: () => '',
+      pickExportFile: () => null,
       logger
     })
     expectOk(emptyHandlers['village:save'](villageInput))
@@ -353,6 +379,88 @@ describe('IPC handlers', () => {
     expect(result.ok ? 'ok' : result.error.code).toBe('CATALOGUE_INCOMPLETE')
     expect(expectOk(emptyHandlers['village-state:get-coverage'](undefined)).canRecordItems).toBe(false)
     expect(expectOk(emptyHandlers['builders:set-count']({ count: 3 }))).toHaveLength(3)
+  })
+
+  it('previews and applies a data export over IPC', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 5 }))
+    const text = JSON.stringify({
+      tag: '#REDACTED',
+      timestamp: 1704067200,
+      buildings: [{ data: 900000003, lvl: 3, cnt: 2 }]
+    })
+    const preview = expectOk(handlers['import:preview-text']({ text }))
+    expect(preview.plan.changes.map((c) => c.id)).toEqual(['instances:test-cannon:add'])
+    expect(preview.plan.untouched).toEqual(['resources', 'storage capacities', 'builder count'])
+    expect(structuredClone(preview)).toEqual(preview)
+
+    const applied = expectOk(
+      handlers['import:apply']({
+        importId: preview.importId,
+        acceptedChangeIds: ['instances:test-cannon:add'],
+        conflictResolutions: {}
+      })
+    )
+    expect(applied).toMatchObject({ status: 'applied', exportTimestamp: 1704067200 })
+    expect(typeof applied.appliedAt).toBe('string')
+    expect(expectOk(handlers['import:list'](undefined)).map((i) => i.id)).toEqual([preview.importId])
+    expect(expectOk(handlers['import:get-observations']({ id: preview.importId }))).toHaveLength(1)
+    expect(expectOk(handlers['village-state:get'](undefined))!.items).toHaveLength(2)
+  })
+
+  it('reads the clipboard and files in the main process', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 5 }))
+    clipboardText = JSON.stringify({ tag: '#X', timestamp: 5, buildings: [] })
+    expect(expectOk(handlers['import:preview-clipboard'](undefined)).plan.changes).toEqual([])
+    expect(expectOk(handlers['import:preview-file'](undefined))).toBeNull()
+    pickedFile = JSON.stringify({ tag: '#X', timestamp: 6, buildings: [] })
+    expect(expectOk(handlers['import:preview-file'](undefined))!.importId).toBeGreaterThan(0)
+  })
+
+  it('maps import failures to IMPORT_INVALID, STALE_PREVIEW and VALIDATION_ERROR', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 5 }))
+    const invalid = handlers['import:preview-text']({ text: '{"tag":"#SECRET", nope' })
+    expect(invalid.ok ? 'ok' : invalid.error.code).toBe('IMPORT_INVALID')
+    expect(JSON.stringify(invalid)).not.toContain('SECRET')
+
+    const text = JSON.stringify({ tag: '#X', timestamp: 7, buildings: [{ data: 900000003, lvl: 3, cnt: 1 }] })
+    const preview = expectOk(handlers['import:preview-text']({ text }))
+    expectOk(handlers['builders:set-count']({ count: 1 }))
+    expectOk(
+      handlers['village-items:save']({
+        itemId: 'test-mortar',
+        instanceNumber: 1,
+        level: 1,
+        targetLevel: null,
+        upgradeStartedAt: null,
+        upgradeEndsAt: null,
+        builderId: null
+      })
+    )
+    const stale = handlers['import:apply']({
+      importId: preview.importId,
+      acceptedChangeIds: ['instances:test-cannon:add'],
+      conflictResolutions: {}
+    })
+    expect(stale.ok ? 'ok' : stale.error.code).toBe('STALE_PREVIEW')
+
+    const fresh = expectOk(handlers['import:preview-text']({ text }))
+    const unknown = handlers['import:apply']({
+      importId: fresh.importId,
+      acceptedChangeIds: ['nope'],
+      conflictResolutions: {}
+    })
+    expect(unknown.ok ? 'ok' : unknown.error.code).toBe('VALIDATION_ERROR')
+
+    for (const payload of [
+      { importId: fresh.importId, acceptedChangeIds: 'all', conflictResolutions: {} },
+      { importId: fresh.importId, acceptedChangeIds: [], conflictResolutions: { x: 'maybe' } },
+      { importId: 0, acceptedChangeIds: [], conflictResolutions: {} }
+    ]) {
+      const result = handlers['import:apply'](payload)
+      expect(result.ok ? 'ok' : result.error.code, JSON.stringify(payload)).toBe('VALIDATION_ERROR')
+    }
+    const missing = handlers['import:discard']({ id: 999 })
+    expect(missing.ok ? 'ok' : missing.error.code).toBe('NOT_FOUND')
   })
 
   it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {

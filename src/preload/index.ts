@@ -62,6 +62,15 @@ const api: ClashForgeApi = {
   },
   legacy: {
     list: (input) => invoke(IPC_CHANNELS.legacyList, input)
+  },
+  imports: {
+    previewText: (input) => invoke(IPC_CHANNELS.importPreviewText, input),
+    previewClipboard: () => invoke(IPC_CHANNELS.importPreviewClipboard),
+    previewFile: () => invoke(IPC_CHANNELS.importPreviewFile),
+    apply: (input) => invoke(IPC_CHANNELS.importApply, input),
+    discard: (input) => invoke(IPC_CHANNELS.importDiscard, input),
+    list: (input) => invoke(IPC_CHANNELS.importList, input),
+    getObservations: (input) => invoke(IPC_CHANNELS.importGetObservations, input)
   }
 }
 

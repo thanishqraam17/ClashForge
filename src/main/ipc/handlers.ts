@@ -1,5 +1,11 @@
 import type { ClashForgeDatabase } from '../../database/client/database'
 import type { AssetService } from '../../services/asset-service'
+import {
+  ImportApplyError,
+  ImportInvalidError,
+  StalePreviewError,
+  type ImportService
+} from '../../services/import-service'
 import type { CatalogueService } from '../../services/catalogue-service'
 import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
@@ -24,6 +30,9 @@ import {
   parseAssetsResolveInput,
   parseBuildersSetCountInput,
   parseIdInput,
+  parseImportApplyInput,
+  parseImportListInput,
+  parseImportPreviewTextInput,
   parseLegacyListInput,
   parseResearchRemoveInput,
   parseResearchSaveInput,
@@ -42,6 +51,7 @@ import {
 import {
   toBuilderDto,
   toCoverageDto,
+  toExportImportDto,
   toLegacyRecordDto,
   toResearchStateDto,
   toSnapshotDto,
@@ -90,6 +100,9 @@ function mapServiceError(error: unknown): IpcErrorCode | null {
   if (error instanceof CatalogueCoverageError) return 'CATALOGUE_INCOMPLETE'
   if (error instanceof VillageNotInitialisedError) return 'VILLAGE_NOT_INITIALISED'
   if (error instanceof VillageStateNotFoundError) return 'NOT_FOUND'
+  if (error instanceof ImportInvalidError) return 'IMPORT_INVALID'
+  if (error instanceof StalePreviewError) return 'STALE_PREVIEW'
+  if (error instanceof ImportApplyError) return 'VALIDATION_ERROR'
   return null
 }
 
@@ -138,6 +151,11 @@ export type IpcHandlerDependencies = {
   townHall: TownHallService
   assets: AssetService
   villageState: VillageStateService
+  imports: ImportService
+  /** Reads clipboard text (main process). */
+  readClipboardText: () => string
+  /** Lets the user pick an export file and returns its text, or null if cancelled. */
+  pickExportFile: () => string | null
   logger?: IpcLogger
 }
 
@@ -147,6 +165,9 @@ export function createIpcHandlers({
   townHall,
   assets,
   villageState,
+  imports,
+  readClipboardText,
+  pickExportFile,
   logger = console
 }: IpcHandlerDependencies): IpcHandlerMap {
   function requireVillage(): void {
@@ -319,6 +340,38 @@ export function createIpcHandlers({
       return database.legacyRecords
         .list({ villageId: LOCAL_VILLAGE_ID, ...(status ? { status } : {}) })
         .map(toLegacyRecordDto)
+    }),
+
+    'import:preview-text': wrap('import:preview-text', logger, (payload) => {
+      return imports.previewText(parseImportPreviewTextInput(payload).text)
+    }),
+
+    'import:preview-clipboard': wrap('import:preview-clipboard', logger, (payload) => {
+      parseEmptyInput(payload)
+      return imports.previewText(readClipboardText())
+    }),
+
+    'import:preview-file': wrap('import:preview-file', logger, (payload) => {
+      parseEmptyInput(payload)
+      const text = pickExportFile()
+      return text === null ? null : imports.previewText(text)
+    }),
+
+    'import:apply': wrap('import:apply', logger, (payload) => {
+      return toExportImportDto(imports.apply(parseImportApplyInput(payload)))
+    }),
+
+    'import:discard': wrap('import:discard', logger, (payload) => {
+      return toExportImportDto(imports.discard(parseIdInput(payload).id))
+    }),
+
+    'import:list': wrap('import:list', logger, (payload) => {
+      const { limit } = parseImportListInput(payload)
+      return imports.list(limit).map(toExportImportDto)
+    }),
+
+    'import:get-observations': wrap('import:get-observations', logger, (payload) => {
+      return imports.getObservations(parseIdInput(payload).id)
     })
   }
 }

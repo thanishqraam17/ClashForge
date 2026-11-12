@@ -22,6 +22,11 @@ import type {
   ReconciliationStatus
 } from '../../database/repositories/legacy-record-repository'
 import type { TownHallComparison, TownHallSummary } from '../../services/town-hall-service'
+import type { ImportPlanSummary } from '../../services/import-service'
+import type {
+  ExportObservation,
+  ImportStatus
+} from '../../database/repositories/import-repository'
 import {
   UPGRADE_HISTORY_ENTITY_TYPES,
   type UpgradeHistoryEntityType
@@ -51,7 +56,14 @@ export const IPC_CHANNELS = {
   snapshotsCapture: 'snapshots:capture',
   snapshotsList: 'snapshots:list',
   snapshotsGet: 'snapshots:get',
-  legacyList: 'legacy:list'
+  legacyList: 'legacy:list',
+  importPreviewText: 'import:preview-text',
+  importPreviewClipboard: 'import:preview-clipboard',
+  importPreviewFile: 'import:preview-file',
+  importApply: 'import:apply',
+  importDiscard: 'import:discard',
+  importList: 'import:list',
+  importGetObservations: 'import:get-observations'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -247,6 +259,29 @@ export type LegacyRecordDto = {
   archivedAt: IsoTimestamp | null
 }
 
+/** A previewed export: proposed changes, inferences, conflicts and everything not imported. */
+export type ImportPreviewDto = {
+  importId: number
+  plan: ImportPlanSummary
+}
+
+export type ExportImportDto = {
+  id: number
+  /** Original export timestamp (Unix seconds), unchanged. */
+  exportTimestamp: number
+  status: ImportStatus
+  dataVersion: string
+  semanticsVersion: string
+  previewedAt: IsoTimestamp
+  appliedAt: IsoTimestamp | null
+  discardedAt: IsoTimestamp | null
+  summary: ImportPlanSummary
+  applyResult: unknown | null
+}
+
+/** Every export entry exactly as observed (known fields only). */
+export type ExportObservationDto = ExportObservation
+
 // ---------------------------------------------------------------------------
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
@@ -342,6 +377,18 @@ export type SnapshotsListInput = { limit?: number }
 
 export type LegacyListInput = { status?: ReconciliationStatus }
 
+export type ImportPreviewTextInput = { text: string }
+
+export type ImportApplyInput = {
+  importId: number
+  /** Changes to apply. Removals and conflicting changes must be listed individually. */
+  acceptedChangeIds: string[]
+  /** One decision per conflict on an accepted change, keyed `kind:recordId`. */
+  conflictResolutions: Record<string, 'keep-current' | 'apply-export'>
+}
+
+export type ImportListInput = { limit?: number }
+
 // ---------------------------------------------------------------------------
 // Results and errors
 // ---------------------------------------------------------------------------
@@ -352,6 +399,10 @@ export const IPC_ERROR_CODES = [
   'VILLAGE_NOT_INITIALISED',
   /** The bundled game data does not cover this yet; not the user's mistake. */
   'CATALOGUE_INCOMPLETE',
+  /** The export text could not be read as a village export. */
+  'IMPORT_INVALID',
+  /** The village changed after the preview; preview again. */
+  'STALE_PREVIEW',
   'FORBIDDEN',
   'INTERNAL_ERROR'
 ] as const
@@ -397,6 +448,15 @@ export type IpcContract = {
   'snapshots:list': { request: SnapshotsListInput | void; response: SnapshotSummaryDto[] }
   'snapshots:get': { request: IdInput; response: SnapshotDto | null }
   'legacy:list': { request: LegacyListInput | void; response: LegacyRecordDto[] }
+  'import:preview-text': { request: ImportPreviewTextInput; response: ImportPreviewDto }
+  /** Reads the clipboard in the main process. */
+  'import:preview-clipboard': { request: void; response: ImportPreviewDto }
+  /** Opens a file picker in the main process; null when cancelled. */
+  'import:preview-file': { request: void; response: ImportPreviewDto | null }
+  'import:apply': { request: ImportApplyInput; response: ExportImportDto }
+  'import:discard': { request: IdInput; response: ExportImportDto }
+  'import:list': { request: ImportListInput | void; response: ExportImportDto[] }
+  'import:get-observations': { request: IdInput; response: ExportObservationDto[] }
 }
 
 export type IpcRequest<C extends IpcChannel> = IpcContract[C]['request']
@@ -453,5 +513,14 @@ export type ClashForgeApi = {
   }
   legacy: {
     list: (input?: LegacyListInput) => Promise<IpcResult<LegacyRecordDto[]>>
+  }
+  imports: {
+    previewText: (input: ImportPreviewTextInput) => Promise<IpcResult<ImportPreviewDto>>
+    previewClipboard: () => Promise<IpcResult<ImportPreviewDto>>
+    previewFile: () => Promise<IpcResult<ImportPreviewDto | null>>
+    apply: (input: ImportApplyInput) => Promise<IpcResult<ExportImportDto>>
+    discard: (input: IdInput) => Promise<IpcResult<ExportImportDto>>
+    list: (input?: ImportListInput) => Promise<IpcResult<ExportImportDto[]>>
+    getObservations: (input: IdInput) => Promise<IpcResult<ExportObservationDto[]>>
   }
 }
