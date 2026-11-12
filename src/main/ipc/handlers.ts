@@ -21,6 +21,7 @@ import {
   type VillageStateService
 } from '../../services/village-state-service'
 import {
+  EDIT_LOG_PAGE_DEFAULT_LIMIT,
   HISTORY_RECENT_DEFAULT_LIMIT,
   type IpcChannel,
   type IpcErrorCode,
@@ -31,6 +32,13 @@ import {
   IpcInputError,
   parseAssetsResolveInput,
   parseBuildersSetCountInput,
+  parseEditLogGetBatchInput,
+  parseEditLogListInput,
+  parseLegacyMapInput,
+  parseLegacyRecordRefInput,
+  parseVillageItemRemoveInput,
+  parseVillageItemsSetCountInput,
+  parseVillageItemsSetLevelsInput,
   parseIdInput,
   parseImportApplyInput,
   parseImportListInput,
@@ -52,6 +60,7 @@ import {
 } from '../../shared/ipc/validation'
 import {
   toBuilderDto,
+  toEditLogEntryDto,
   toCoverageDto,
   toExportImportDto,
   toLegacyRecordDto,
@@ -193,8 +202,8 @@ export function createIpcHandlers({
     }),
 
     'village:save': wrap('village:save', logger, (payload) => {
-      const input = parseVillageSaveInput(payload)
-      const village = edits.saveVillage({ ...input, lastScannedAt: toDateOrNull(input.lastScannedAt) })
+      const { note = null, ...input } = parseVillageSaveInput(payload)
+      const village = edits.saveVillage({ ...input, lastScannedAt: toDateOrNull(input.lastScannedAt) }, note)
       return toVillageDto(village)
     }),
 
@@ -289,36 +298,53 @@ export function createIpcHandlers({
     }),
 
     'village-items:save': wrap('village-items:save', logger, (payload) => {
-      const input = parseVillageItemSaveInput(payload)
-      const saved = edits.saveItemInstance({
-        ...input,
-        upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
-        upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
-      })
+      const { note = null, ...input } = parseVillageItemSaveInput(payload)
+      const saved = edits.saveItemInstance(
+        {
+          ...input,
+          upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
+          upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
+        },
+        note
+      )
       return toVillageItemDto(saved)
     }),
 
     'village-items:remove': wrap('village-items:remove', logger, (payload) => {
-      edits.removeItemInstance(parseIdInput(payload).id)
+      const { id, note = null } = parseVillageItemRemoveInput(payload)
+      edits.removeItemInstance(id, note)
       return null
     }),
 
+    'village-items:set-levels': wrap('village-items:set-levels', logger, (payload) => {
+      return edits.setItemLevels(parseVillageItemsSetLevelsInput(payload))
+    }),
+
+    'village-items:set-count': wrap('village-items:set-count', logger, (payload) => {
+      return edits.setItemCount(parseVillageItemsSetCountInput(payload))
+    }),
+
     'builders:set-count': wrap('builders:set-count', logger, (payload) => {
-      return edits.setBuilderCount(parseBuildersSetCountInput(payload).count).map(toBuilderDto)
+      const { count, note = null } = parseBuildersSetCountInput(payload)
+      return edits.setBuilderCount(count, note).map(toBuilderDto)
     }),
 
     'research:save': wrap('research:save', logger, (payload) => {
-      const input = parseResearchSaveInput(payload)
-      const saved = edits.saveResearch({
-        ...input,
-        researchStartedAt: toDateOrNull(input.researchStartedAt),
-        researchEndsAt: toDateOrNull(input.researchEndsAt)
-      })
+      const { note = null, ...input } = parseResearchSaveInput(payload)
+      const saved = edits.saveResearch(
+        {
+          ...input,
+          researchStartedAt: toDateOrNull(input.researchStartedAt),
+          researchEndsAt: toDateOrNull(input.researchEndsAt)
+        },
+        note
+      )
       return toResearchStateDto(saved)
     }),
 
     'research:remove': wrap('research:remove', logger, (payload) => {
-      edits.removeResearch(parseResearchRemoveInput(payload).itemId)
+      const { itemId, note = null } = parseResearchRemoveInput(payload)
+      edits.removeResearch(itemId, note)
       return null
     }),
 
@@ -342,6 +368,41 @@ export function createIpcHandlers({
       return database.legacyRecords
         .list({ villageId: LOCAL_VILLAGE_ID, ...(status ? { status } : {}) })
         .map(toLegacyRecordDto)
+    }),
+
+    'legacy:map': wrap('legacy:map', logger, (payload) => {
+      return edits.mapLegacyRecord(parseLegacyMapInput(payload))
+    }),
+
+    'legacy:dismiss': wrap('legacy:dismiss', logger, (payload) => {
+      const input = parseLegacyRecordRefInput(payload)
+      edits.dismissLegacyRecord(input)
+      return toLegacyRecordDto(database.legacyRecords.get(input.kind, input.id)!)
+    }),
+
+    'legacy:restore': wrap('legacy:restore', logger, (payload) => {
+      const input = parseLegacyRecordRefInput(payload)
+      edits.restoreLegacyRecord(input)
+      return toLegacyRecordDto(database.legacyRecords.get(input.kind, input.id)!)
+    }),
+
+    'edit-log:list': wrap('edit-log:list', logger, (payload) => {
+      const { limit = EDIT_LOG_PAGE_DEFAULT_LIMIT, ...filters } = parseEditLogListInput(payload)
+      const entries = database.editLog.list(LOCAL_VILLAGE_ID, { ...filters, limit })
+      // A full page may or may not be the last one: look for one more older entry.
+      const last = entries.at(-1)
+      const hasMore =
+        entries.length === limit &&
+        last !== undefined &&
+        database.editLog.list(LOCAL_VILLAGE_ID, { ...filters, beforeId: last.id, limit: 1 }).length > 0
+      return { entries: entries.map(toEditLogEntryDto), nextBeforeId: hasMore ? last!.id : null }
+    }),
+
+    'edit-log:get-batch': wrap('edit-log:get-batch', logger, (payload) => {
+      const { batchId } = parseEditLogGetBatchInput(payload)
+      const entries = database.editLog.getBatch(batchId).filter((e) => e.villageId === LOCAL_VILLAGE_ID)
+      if (entries.length === 0) throw new IpcHandlerError('NOT_FOUND', 'No edits were recorded under this batch')
+      return entries.map(toEditLogEntryDto)
     }),
 
     'import:preview-text': wrap('import:preview-text', logger, (payload) => {

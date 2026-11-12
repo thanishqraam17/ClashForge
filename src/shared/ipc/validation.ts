@@ -1,6 +1,18 @@
 import { GAME_MODES, ITEM_CATEGORIES, isValidItemId } from '../../domain/catalogue'
+import { EDIT_ENTITY_TYPES, EDIT_NOTE_MAX_LENGTH, type EditEntityType } from '../../domain/edit-log'
+import type { LegacyKind } from '../../database/repositories/legacy-record-repository'
 import {
+  BULK_EDIT_MAX_ITEMS,
+  EDIT_LOG_PAGE_MAX_LIMIT,
   HISTORY_RECENT_MAX_LIMIT,
+  type EditLogGetBatchInput,
+  type EditLogListInput,
+  type EditNoteInput,
+  type LegacyMapInput,
+  type LegacyRecordRefInput,
+  type VillageItemRemoveInput,
+  type VillageItemsSetCountInput,
+  type VillageItemsSetLevelsInput,
   type CatalogueGetItemInput,
   type AssetsResolveInput,
   type BuildersSetCountInput,
@@ -41,6 +53,45 @@ const MAX_TEXT_LENGTH = 200
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/
 
 type Fields = Record<string, unknown>
+
+/**
+ * The optional edit note. Only present in the result when sent, so requests
+ * without a note parse exactly as before.
+ */
+function noteField(fields: Fields): EditNoteInput {
+  if (!('note' in fields) || fields['note'] === undefined) return {}
+  const value = fields['note']
+  if (value === null) return { note: null }
+  if (typeof value !== 'string') throw new IpcInputError('note must be a string or null')
+  if (!value.trim()) throw new IpcInputError('note must not be empty')
+  if (value.length > EDIT_NOTE_MAX_LENGTH) {
+    throw new IpcInputError(`note must be at most ${EDIT_NOTE_MAX_LENGTH} characters`)
+  }
+  return { note: value }
+}
+
+/** A list of distinct positive integer ids, at most BULK_EDIT_MAX_ITEMS long. */
+function idList(fields: Fields, key: string, { allowEmpty }: { allowEmpty: boolean }): number[] {
+  const value = fields[key]
+  if (!Array.isArray(value)) throw new IpcInputError(`${key} must be a list of ids`)
+  if (!allowEmpty && value.length === 0) throw new IpcInputError(`${key} must not be empty`)
+  if (value.length > BULK_EDIT_MAX_ITEMS) {
+    throw new IpcInputError(`${key} must have at most ${BULK_EDIT_MAX_ITEMS} entries`)
+  }
+  for (let i = 0; i < value.length; i += 1) {
+    if (!(i in value)) throw new IpcInputError(`${key} must not have gaps`)
+    const id = value[i]
+    if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 1) {
+      throw new IpcInputError(`${key} must contain positive integer ids`)
+    }
+  }
+  if (new Set(value).size !== value.length) throw new IpcInputError(`${key} must not contain duplicates`)
+  return [...(value as number[])]
+}
+
+function optionalIdList(fields: Fields, key: string): number[] | undefined {
+  return fields[key] === undefined ? undefined : idList(fields, key, { allowEmpty: true })
+}
 
 function asObject(value: unknown, allowedKeys: readonly string[], label: string): Fields {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -130,7 +181,8 @@ const VILLAGE_KEYS = [
   'goldCapacity',
   'elixirCapacity',
   'darkElixirCapacity',
-  'lastScannedAt'
+  'lastScannedAt',
+  'note'
 ] as const
 
 export function parseVillageSaveInput(value: unknown): VillageSaveInput {
@@ -143,7 +195,8 @@ export function parseVillageSaveInput(value: unknown): VillageSaveInput {
     goldCapacity: nonNegativeInt(f, 'goldCapacity'),
     elixirCapacity: nonNegativeInt(f, 'elixirCapacity'),
     darkElixirCapacity: nonNegativeInt(f, 'darkElixirCapacity'),
-    lastScannedAt: nullableTimestamp(f, 'lastScannedAt')
+    lastScannedAt: nullableTimestamp(f, 'lastScannedAt'),
+    ...noteField(f)
   }
 }
 
@@ -318,7 +371,7 @@ function nullablePositiveInt(fields: Fields, key: string): number | null {
 export function parseVillageItemSaveInput(value: unknown): VillageItemSaveInput {
   const f = asObject(
     value,
-    ['id', 'itemId', 'instanceNumber', 'level', 'targetLevel', 'upgradeStartedAt', 'upgradeEndsAt', 'builderId'],
+    ['id', 'itemId', 'instanceNumber', 'level', 'targetLevel', 'upgradeStartedAt', 'upgradeEndsAt', 'builderId', 'note'],
     'village item'
   )
   const id = optionalPositiveInt(f, 'id')
@@ -330,8 +383,14 @@ export function parseVillageItemSaveInput(value: unknown): VillageItemSaveInput 
     targetLevel: nullablePositiveInt(f, 'targetLevel'),
     upgradeStartedAt: nullableTimestamp(f, 'upgradeStartedAt'),
     upgradeEndsAt: nullableTimestamp(f, 'upgradeEndsAt'),
-    builderId: nullablePositiveInt(f, 'builderId')
+    builderId: nullablePositiveInt(f, 'builderId'),
+    ...noteField(f)
   }
+}
+
+export function parseVillageItemRemoveInput(value: unknown): VillageItemRemoveInput {
+  const f = asObject(value, ['id', 'note'], 'request')
+  return { id: positiveInt(f, 'id'), ...noteField(f) }
 }
 
 export function parseIdInput(value: unknown): IdInput {
@@ -340,14 +399,14 @@ export function parseIdInput(value: unknown): IdInput {
 }
 
 export function parseBuildersSetCountInput(value: unknown): BuildersSetCountInput {
-  const f = asObject(value, ['count'], 'builder count')
-  return { count: nonNegativeInt(f, 'count') }
+  const f = asObject(value, ['count', 'note'], 'builder count')
+  return { count: nonNegativeInt(f, 'count'), ...noteField(f) }
 }
 
 export function parseResearchSaveInput(value: unknown): ResearchSaveInput {
   const f = asObject(
     value,
-    ['itemId', 'level', 'targetLevel', 'researchStartedAt', 'researchEndsAt'],
+    ['itemId', 'level', 'targetLevel', 'researchStartedAt', 'researchEndsAt', 'note'],
     'research'
   )
   return {
@@ -355,13 +414,14 @@ export function parseResearchSaveInput(value: unknown): ResearchSaveInput {
     level: positiveInt(f, 'level'),
     targetLevel: nullablePositiveInt(f, 'targetLevel'),
     researchStartedAt: nullableTimestamp(f, 'researchStartedAt'),
-    researchEndsAt: nullableTimestamp(f, 'researchEndsAt')
+    researchEndsAt: nullableTimestamp(f, 'researchEndsAt'),
+    ...noteField(f)
   }
 }
 
 export function parseResearchRemoveInput(value: unknown): ResearchRemoveInput {
-  const f = asObject(value, ['itemId'], 'research')
-  return { itemId: itemIdField(f) }
+  const f = asObject(value, ['itemId', 'note'], 'research')
+  return { itemId: itemIdField(f), ...noteField(f) }
 }
 
 const SNAPSHOT_LIST_MAX = 200
@@ -374,6 +434,109 @@ export function parseSnapshotsListInput(value: unknown): SnapshotsListInput {
     throw new IpcInputError(`limit must be at most ${SNAPSHOT_LIST_MAX}`)
   }
   return limit === undefined ? {} : { limit }
+}
+
+// Bulk edits, legacy reconciliation and the edit log: shape and bounds only.
+// Ownership, active-upgrade inclusion, coverage, Town Hall limits and legacy
+// status are enforced by the edit service.
+
+export function parseVillageItemsSetLevelsInput(value: unknown): VillageItemsSetLevelsInput {
+  const f = asObject(value, ['itemId', 'level', 'instances', 'includeActiveUpgrades', 'note'], 'bulk level edit')
+  const instances = f['instances'] === 'all' ? 'all' : idList(f, 'instances', { allowEmpty: false })
+  const include = optionalIdList(f, 'includeActiveUpgrades')
+  return {
+    itemId: itemIdField(f),
+    level: positiveInt(f, 'level'),
+    instances,
+    ...(include === undefined ? {} : { includeActiveUpgrades: include }),
+    ...noteField(f)
+  }
+}
+
+export function parseVillageItemsSetCountInput(value: unknown): VillageItemsSetCountInput {
+  const f = asObject(
+    value,
+    ['itemId', 'count', 'levelForAdditions', 'removeInstances', 'includeActiveUpgrades', 'note'],
+    'bulk count edit'
+  )
+  const count = nonNegativeInt(f, 'count')
+  if (count > BULK_EDIT_MAX_ITEMS) throw new IpcInputError(`count must be at most ${BULK_EDIT_MAX_ITEMS}`)
+  const levelForAdditions = optionalPositiveInt(f, 'levelForAdditions')
+  const removeInstances = optionalIdList(f, 'removeInstances')
+  const include = optionalIdList(f, 'includeActiveUpgrades')
+  return {
+    itemId: itemIdField(f),
+    count,
+    ...(levelForAdditions === undefined ? {} : { levelForAdditions }),
+    ...(removeInstances === undefined ? {} : { removeInstances }),
+    ...(include === undefined ? {} : { includeActiveUpgrades: include }),
+    ...noteField(f)
+  }
+}
+
+/** Mirrors LEGACY_KINDS without importing the database layer at runtime. */
+const LEGACY_KINDS: readonly LegacyKind[] = ['building', 'hero', 'research']
+
+function legacyKindField(fields: Fields): LegacyKind {
+  const value = fields['kind']
+  if (typeof value !== 'string' || !(LEGACY_KINDS as readonly string[]).includes(value)) {
+    throw new IpcInputError(`kind must be one of: ${LEGACY_KINDS.join(', ')}`)
+  }
+  return value as LegacyKind
+}
+
+export function parseLegacyRecordRefInput(value: unknown): LegacyRecordRefInput {
+  const f = asObject(value, ['kind', 'id', 'note'], 'legacy record')
+  return { kind: legacyKindField(f), id: positiveInt(f, 'id'), ...noteField(f) }
+}
+
+export function parseLegacyMapInput(value: unknown): LegacyMapInput {
+  const f = asObject(value, ['kind', 'id', 'itemId', 'level', 'note'], 'legacy mapping')
+  const level = optionalPositiveInt(f, 'level')
+  return {
+    kind: legacyKindField(f),
+    id: positiveInt(f, 'id'),
+    itemId: itemIdField(f),
+    ...(level === undefined ? {} : { level }),
+    ...noteField(f)
+  }
+}
+
+/** Exactly the format crypto.randomUUID() produces, which is how batch ids are made. */
+const BATCH_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+function batchIdField(fields: Fields): string {
+  const value = fields['batchId']
+  if (typeof value !== 'string' || !BATCH_ID_PATTERN.test(value)) {
+    throw new IpcInputError('batchId must be a batch id')
+  }
+  return value
+}
+
+export function parseEditLogListInput(value: unknown): EditLogListInput {
+  if (value === undefined || value === null) return {}
+  const f = asObject(value, ['limit', 'beforeId', 'entityType', 'itemId', 'batchId'], 'edit log query')
+  const limit = optionalPositiveInt(f, 'limit')
+  if (limit !== undefined && limit > EDIT_LOG_PAGE_MAX_LIMIT) {
+    throw new IpcInputError(`limit must be at most ${EDIT_LOG_PAGE_MAX_LIMIT}`)
+  }
+  const beforeId = optionalPositiveInt(f, 'beforeId')
+  const entityType = f['entityType']
+  if (entityType !== undefined && (typeof entityType !== 'string' || !(EDIT_ENTITY_TYPES as readonly string[]).includes(entityType))) {
+    throw new IpcInputError(`entityType must be one of: ${EDIT_ENTITY_TYPES.join(', ')}`)
+  }
+  return {
+    ...(limit === undefined ? {} : { limit }),
+    ...(beforeId === undefined ? {} : { beforeId }),
+    ...(entityType === undefined ? {} : { entityType: entityType as EditEntityType }),
+    ...(f['itemId'] === undefined ? {} : { itemId: itemIdField(f) }),
+    ...(f['batchId'] === undefined ? {} : { batchId: batchIdField(f) })
+  }
+}
+
+export function parseEditLogGetBatchInput(value: unknown): EditLogGetBatchInput {
+  const f = asObject(value, ['batchId'], 'request')
+  return { batchId: batchIdField(f) }
 }
 
 const RECONCILIATION_STATUS_VALUES = ['pending', 'converted', 'dismissed'] as const

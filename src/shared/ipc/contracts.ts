@@ -22,6 +22,7 @@ import type {
   ReconciliationStatus
 } from '../../database/repositories/legacy-record-repository'
 import type { TownHallComparison, TownHallSummary } from '../../services/town-hall-service'
+import type { EditAction, EditEntityType, JsonValue } from '../../domain/edit-log'
 import type { ImportPlanSummary } from '../../services/import-service'
 import type {
   ExportObservation,
@@ -57,6 +58,13 @@ export const IPC_CHANNELS = {
   snapshotsList: 'snapshots:list',
   snapshotsGet: 'snapshots:get',
   legacyList: 'legacy:list',
+  legacyMap: 'legacy:map',
+  legacyDismiss: 'legacy:dismiss',
+  legacyRestore: 'legacy:restore',
+  villageItemsSetLevels: 'village-items:set-levels',
+  villageItemsSetCount: 'village-items:set-count',
+  editLogList: 'edit-log:list',
+  editLogGetBatch: 'edit-log:get-batch',
   importPreviewText: 'import:preview-text',
   importPreviewClipboard: 'import:preview-clipboard',
   importPreviewFile: 'import:preview-file',
@@ -259,6 +267,41 @@ export type LegacyRecordDto = {
   archivedAt: IsoTimestamp | null
 }
 
+/** Ids of the instances a bulk edit changed; batchId is null when nothing changed. */
+export type BulkEditResultDto = {
+  batchId: string | null
+  created: number[]
+  updated: number[]
+  removed: number[]
+}
+
+/** What a legacy mapping created: item instances, or one research row. */
+export type LegacyMapResultDto = {
+  batchId: string
+  entity: 'item-instance' | 'research'
+  created: number[]
+}
+
+/** One manual edit. `before` is null for creates, `after` for deletes. */
+export type EditLogEntryDto = {
+  id: number
+  entityType: EditEntityType
+  entityId: number | null
+  itemId: string | null
+  action: EditAction
+  before: JsonValue | null
+  after: JsonValue | null
+  batchId: string | null
+  note: string | null
+  createdAt: IsoTimestamp
+}
+
+/** Newest first. Pass nextBeforeId as beforeId for the next page; null on the last page. */
+export type EditLogPageDto = {
+  entries: EditLogEntryDto[]
+  nextBeforeId: number | null
+}
+
 /** A previewed export: proposed changes, inferences, conflicts and everything not imported. */
 export type ImportPreviewDto = {
   importId: number
@@ -286,7 +329,13 @@ export type ExportObservationDto = ExportObservation
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
 
-export type VillageSaveInput = {
+/**
+ * Optional reason stored in the edit log with a manual edit: null or 1 to
+ * EDIT_NOTE_MAX_LENGTH characters, not only whitespace. Omitting it is the same as null.
+ */
+export type EditNoteInput = { note?: string | null }
+
+export type VillageSaveInput = EditNoteInput & {
   townHallLevel: number
   gold: number
   elixir: number
@@ -348,7 +397,7 @@ export type AssetsResolveInput = {
 }
 
 /** Omit `id` to record a new instance. Manual saves are stored as confirmed. */
-export type VillageItemSaveInput = {
+export type VillageItemSaveInput = EditNoteInput & {
   id?: number
   itemId: string
   instanceNumber: number
@@ -361,9 +410,11 @@ export type VillageItemSaveInput = {
 
 export type IdInput = { id: number }
 
-export type BuildersSetCountInput = { count: number }
+export type VillageItemRemoveInput = IdInput & EditNoteInput
 
-export type ResearchSaveInput = {
+export type BuildersSetCountInput = EditNoteInput & { count: number }
+
+export type ResearchSaveInput = EditNoteInput & {
   itemId: string
   level: number
   targetLevel: number | null
@@ -371,7 +422,48 @@ export type ResearchSaveInput = {
   researchEndsAt: IsoTimestamp | null
 }
 
-export type ResearchRemoveInput = { itemId: string }
+export type ResearchRemoveInput = EditNoteInput & { itemId: string }
+
+/** Upper bound on instance-id lists and counts in bulk edits. */
+export const BULK_EDIT_MAX_ITEMS = 500
+
+/**
+ * Sets one level on the chosen instances (or 'all'). Upgrading instances must
+ * be listed in includeActiveUpgrades; their upgrade is ended.
+ */
+export type VillageItemsSetLevelsInput = EditNoteInput & {
+  itemId: string
+  level: number
+  instances: number[] | 'all'
+  includeActiveUpgrades?: number[]
+}
+
+/** Adds idle instances at levelForAdditions, or removes instances, to reach count. */
+export type VillageItemsSetCountInput = EditNoteInput & {
+  itemId: string
+  count: number
+  levelForAdditions?: number
+  removeInstances?: number[]
+  includeActiveUpgrades?: number[]
+}
+
+export type LegacyRecordRefInput = EditNoteInput & { kind: LegacyKind; id: number }
+
+/** level defaults to the archived level. */
+export type LegacyMapInput = LegacyRecordRefInput & { itemId: string; level?: number }
+
+export const EDIT_LOG_PAGE_DEFAULT_LIMIT = 50
+export const EDIT_LOG_PAGE_MAX_LIMIT = 200
+
+export type EditLogListInput = {
+  limit?: number
+  beforeId?: number
+  entityType?: EditEntityType
+  itemId?: string
+  batchId?: string
+}
+
+export type EditLogGetBatchInput = { batchId: string }
 
 export type SnapshotsListInput = { limit?: number }
 
@@ -445,7 +537,9 @@ export type IpcContract = {
   'village-state:get': { request: void; response: VillageStateDto | null }
   'village-state:get-coverage': { request: void; response: CatalogueCoverageDto }
   'village-items:save': { request: VillageItemSaveInput; response: VillageItemDto }
-  'village-items:remove': { request: IdInput; response: null }
+  'village-items:remove': { request: VillageItemRemoveInput; response: null }
+  'village-items:set-levels': { request: VillageItemsSetLevelsInput; response: BulkEditResultDto }
+  'village-items:set-count': { request: VillageItemsSetCountInput; response: BulkEditResultDto }
   'builders:set-count': { request: BuildersSetCountInput; response: BuilderDto[] }
   'research:save': { request: ResearchSaveInput; response: ResearchStateDto }
   'research:remove': { request: ResearchRemoveInput; response: null }
@@ -453,6 +547,14 @@ export type IpcContract = {
   'snapshots:list': { request: SnapshotsListInput | void; response: SnapshotSummaryDto[] }
   'snapshots:get': { request: IdInput; response: SnapshotDto | null }
   'legacy:list': { request: LegacyListInput | void; response: LegacyRecordDto[] }
+  'legacy:map': { request: LegacyMapInput; response: LegacyMapResultDto }
+  /** pending -> dismissed; returns the updated record. */
+  'legacy:dismiss': { request: LegacyRecordRefInput; response: LegacyRecordDto }
+  /** dismissed -> pending; returns the updated record. */
+  'legacy:restore': { request: LegacyRecordRefInput; response: LegacyRecordDto }
+  'edit-log:list': { request: EditLogListInput | void; response: EditLogPageDto }
+  /** NOT_FOUND when the batch has no entries. */
+  'edit-log:get-batch': { request: EditLogGetBatchInput; response: EditLogEntryDto[] }
   'import:preview-text': { request: ImportPreviewTextInput; response: ImportPreviewDto }
   /** Reads the clipboard in the main process. */
   'import:preview-clipboard': { request: void; response: ImportPreviewDto }
@@ -502,7 +604,9 @@ export type ClashForgeApi = {
   }
   villageItems: {
     save: (input: VillageItemSaveInput) => Promise<IpcResult<VillageItemDto>>
-    remove: (input: IdInput) => Promise<IpcResult<null>>
+    remove: (input: VillageItemRemoveInput) => Promise<IpcResult<null>>
+    setLevels: (input: VillageItemsSetLevelsInput) => Promise<IpcResult<BulkEditResultDto>>
+    setCount: (input: VillageItemsSetCountInput) => Promise<IpcResult<BulkEditResultDto>>
   }
   builders: {
     setCount: (input: BuildersSetCountInput) => Promise<IpcResult<BuilderDto[]>>
@@ -518,6 +622,13 @@ export type ClashForgeApi = {
   }
   legacy: {
     list: (input?: LegacyListInput) => Promise<IpcResult<LegacyRecordDto[]>>
+    map: (input: LegacyMapInput) => Promise<IpcResult<LegacyMapResultDto>>
+    dismiss: (input: LegacyRecordRefInput) => Promise<IpcResult<LegacyRecordDto>>
+    restore: (input: LegacyRecordRefInput) => Promise<IpcResult<LegacyRecordDto>>
+  }
+  editLog: {
+    list: (input?: EditLogListInput) => Promise<IpcResult<EditLogPageDto>>
+    getBatch: (input: EditLogGetBatchInput) => Promise<IpcResult<EditLogEntryDto[]>>
   }
   imports: {
     previewText: (input: ImportPreviewTextInput) => Promise<IpcResult<ImportPreviewDto>>

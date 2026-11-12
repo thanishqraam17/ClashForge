@@ -1,5 +1,6 @@
 import type { ExportImport } from '../../database/repositories/import-repository'
 import type { LegacyRecord } from '../../database/repositories/legacy-record-repository'
+import type { EditLogEntry } from '../../domain/edit-log'
 import type { ImportPlanSummary } from '../../services/import-service'
 import type { UpgradeHistory } from '../../domain/upgrade-history'
 import type {
@@ -18,6 +19,7 @@ import type {
   BuilderDto,
   CatalogueCoverageDto,
   ExportImportDto,
+  EditLogEntryDto,
   LegacyRecordDto,
   ProvenanceDto,
   ResearchStateDto,
@@ -182,5 +184,20 @@ export function toExportImportDto(record: ExportImport): ExportImportDto {
     discardedAt: isoOrNull(record.discardedAt),
     summary: record.summary as ImportPlanSummary,
     applyResult: record.applyResult
+  }
+}
+
+export function toEditLogEntryDto(entry: EditLogEntry): EditLogEntryDto {
+  return {
+    id: entry.id,
+    entityType: entry.entityType,
+    entityId: entry.entityId,
+    itemId: entry.itemId,
+    action: entry.action,
+    before: entry.before,
+    after: entry.after,
+    batchId: entry.batchId,
+    note: entry.note,
+    createdAt: entry.createdAt.toISOString()
   }
 }

@@ -46,7 +46,9 @@ const api: ClashForgeApi = {
   },
   villageItems: {
     save: (input) => invoke(IPC_CHANNELS.villageItemsSave, input),
-    remove: (input) => invoke(IPC_CHANNELS.villageItemsRemove, input)
+    remove: (input) => invoke(IPC_CHANNELS.villageItemsRemove, input),
+    setLevels: (input) => invoke(IPC_CHANNELS.villageItemsSetLevels, input),
+    setCount: (input) => invoke(IPC_CHANNELS.villageItemsSetCount, input)
   },
   builders: {
     setCount: (input) => invoke(IPC_CHANNELS.buildersSetCount, input)
@@ -61,7 +63,14 @@ const api: ClashForgeApi = {
     get: (input) => invoke(IPC_CHANNELS.snapshotsGet, input)
   },
   legacy: {
-    list: (input) => invoke(IPC_CHANNELS.legacyList, input)
+    list: (input) => invoke(IPC_CHANNELS.legacyList, input),
+    map: (input) => invoke(IPC_CHANNELS.legacyMap, input),
+    dismiss: (input) => invoke(IPC_CHANNELS.legacyDismiss, input),
+    restore: (input) => invoke(IPC_CHANNELS.legacyRestore, input)
+  },
+  editLog: {
+    list: (input) => invoke(IPC_CHANNELS.editLogList, input),
+    getBatch: (input) => invoke(IPC_CHANNELS.editLogGetBatch, input)
   },
   imports: {
     previewText: (input) => invoke(IPC_CHANNELS.importPreviewText, input),
