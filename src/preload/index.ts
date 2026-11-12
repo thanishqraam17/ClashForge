@@ -36,6 +36,11 @@ const api: ClashForgeApi = {
   history: {
     getRecent: (input) => invoke(IPC_CHANNELS.historyGetRecent, input),
     record: (input) => invoke(IPC_CHANNELS.historyRecord, input)
+  },
+  catalogue: {
+    getItems: (input) => invoke(IPC_CHANNELS.catalogueGetItems, input),
+    getItem: (input) => invoke(IPC_CHANNELS.catalogueGetItem, input),
+    getDatasetInfo: () => invoke(IPC_CHANNELS.catalogueGetDatasetInfo)
   }
 }
 

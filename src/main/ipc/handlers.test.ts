@@ -8,7 +8,12 @@ import {
   type IpcResult,
   type VillageSaveInput
 } from '../../shared/ipc/contracts'
+import { parseGameCatalogue } from '../../domain/catalogue-validation'
+import { SAMPLE_ITEMS, SAMPLE_MANIFEST } from '../../game-data/fixtures/sample-catalogue'
+import { createCatalogueService } from '../../services/catalogue-service'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
+
+const catalogue = createCatalogueService(parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS))
 
 const villageInput: VillageSaveInput = {
   townHallLevel: 9,
@@ -40,7 +45,7 @@ describe('IPC handlers', () => {
     dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
     database = createDatabase({ dbPath: join(dir, 'test.db') })
     logger.error.mockReset()
-    handlers = createIpcHandlers(database, logger)
+    handlers = createIpcHandlers({ database, catalogue, logger })
   })
 
   afterEach(() => {
@@ -237,6 +242,35 @@ describe('IPC handlers', () => {
       completedAt: null
     })
     expect(invalidType.ok).toBe(false)
+  })
+
+  it('queries the catalogue with validated filters', () => {
+    const defenses = expectOk(
+      handlers['catalogue:get-items']({ categories: ['defense'], maxTownHall: 2 })
+    )
+    expect(defenses.map((item) => item.id)).toEqual(['test-cannon'])
+    expect(expectOk(handlers['catalogue:get-items'](undefined))).toHaveLength(9)
+    expect(expectOk(handlers['catalogue:get-item']({ id: 'test-knight' }))?.name).toBe(
+      'Test Knight'
+    )
+    expect(expectOk(handlers['catalogue:get-item']({ id: 'nope' }))).toBeNull()
+    expect(expectOk(handlers['catalogue:get-dataset-info'](undefined)).itemCount).toBe(10)
+
+    for (const payload of [
+      { categories: ['castle'] },
+      { categories: 'defense' },
+      { gameMode: 'clan-capital' },
+      { maxTownHall: 0 },
+      { search: 5 },
+      { sort: 'name' }
+    ]) {
+      const result = handlers['catalogue:get-items'](payload)
+      expect(result.ok ? 'ok' : result.error.code, JSON.stringify(payload)).toBe(
+        'VALIDATION_ERROR'
+      )
+    }
+    const badId = handlers['catalogue:get-item']({ id: '../../etc' })
+    expect(badId.ok ? 'ok' : badId.error.code).toBe('VALIDATION_ERROR')
   })
 
   it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {

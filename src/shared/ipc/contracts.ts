@@ -9,6 +9,12 @@
  *   renderer, preload and main process can all share it.
  */
 
+import type {
+  CatalogueItem,
+  GameMode,
+  ItemCategory,
+  ValidationStatus
+} from '../../domain/catalogue'
 import {
   UPGRADE_HISTORY_ENTITY_TYPES,
   type UpgradeHistoryEntityType
@@ -24,7 +30,10 @@ export const IPC_CHANNELS = {
   researchList: 'research:list',
   researchSave: 'research:save',
   historyGetRecent: 'history:get-recent',
-  historyRecord: 'history:record'
+  historyRecord: 'history:record',
+  catalogueGetItems: 'catalogue:get-items',
+  catalogueGetItem: 'catalogue:get-item',
+  catalogueGetDatasetInfo: 'catalogue:get-dataset-info'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -108,6 +117,20 @@ export type UpgradeHistoryDto = {
   createdAt: IsoTimestamp
 }
 
+/** Catalogue items are static plain data, so the DTO is the domain type itself. */
+export type CatalogueItemDto = CatalogueItem
+
+export type DatasetInfoDto = {
+  datasetVersion: string
+  gameVersion: string | null
+  releasedAt: string
+  validationStatus: ValidationStatus
+  knownOmissions: string[]
+  itemCount: number
+  isStale: boolean
+  ageInDays: number
+}
+
 // ---------------------------------------------------------------------------
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
@@ -175,6 +198,17 @@ export type HistoryRecordInput = {
   completedAt: IsoTimestamp | null
 }
 
+export type CatalogueGetItemsInput = {
+  gameMode?: GameMode
+  categories?: ItemCategory[]
+  search?: string
+  maxTownHall?: number
+}
+
+export type CatalogueGetItemInput = {
+  id: string
+}
+
 // ---------------------------------------------------------------------------
 // Results and errors
 // ---------------------------------------------------------------------------
@@ -211,6 +245,12 @@ export type IpcContract = {
   'research:save': { request: ResearchSaveInput; response: ResearchDto }
   'history:get-recent': { request: HistoryGetRecentInput | void; response: UpgradeHistoryDto[] }
   'history:record': { request: HistoryRecordInput; response: UpgradeHistoryDto }
+  'catalogue:get-items': {
+    request: CatalogueGetItemsInput | void
+    response: CatalogueItemDto[]
+  }
+  'catalogue:get-item': { request: CatalogueGetItemInput; response: CatalogueItemDto | null }
+  'catalogue:get-dataset-info': { request: void; response: DatasetInfoDto }
 }
 
 export type IpcRequest<C extends IpcChannel> = IpcContract[C]['request']
@@ -241,5 +281,10 @@ export type ClashForgeApi = {
   history: {
     getRecent: (input?: HistoryGetRecentInput) => Promise<IpcResult<UpgradeHistoryDto[]>>
     record: (input: HistoryRecordInput) => Promise<IpcResult<UpgradeHistoryDto>>
+  }
+  catalogue: {
+    getItems: (input?: CatalogueGetItemsInput) => Promise<IpcResult<CatalogueItemDto[]>>
+    getItem: (input: CatalogueGetItemInput) => Promise<IpcResult<CatalogueItemDto | null>>
+    getDatasetInfo: () => Promise<IpcResult<DatasetInfoDto>>
   }
 }

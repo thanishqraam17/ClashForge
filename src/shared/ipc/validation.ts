@@ -1,5 +1,8 @@
+import { GAME_MODES, ITEM_CATEGORIES, isValidItemId } from '../../domain/catalogue'
 import {
   HISTORY_RECENT_MAX_LIMIT,
+  type CatalogueGetItemInput,
+  type CatalogueGetItemsInput,
   UPGRADE_HISTORY_ENTITY_TYPES,
   type BuildingSaveInput,
   type HeroSaveInput,
@@ -248,6 +251,70 @@ export function parseHistoryRecordInput(value: unknown): HistoryRecordInput {
     startedAt: timestamp(f, 'startedAt'),
     completedAt: nullableTimestamp(f, 'completedAt')
   }
+}
+
+const MAX_TOWN_HALL_FILTER = 30
+
+export function parseCatalogueGetItemsInput(value: unknown): CatalogueGetItemsInput {
+  if (value === undefined || value === null) {
+    return {}
+  }
+  const f = asObject(
+    value,
+    ['gameMode', 'categories', 'search', 'maxTownHall'],
+    'catalogue query'
+  )
+  const result: CatalogueGetItemsInput = {}
+
+  if (f['gameMode'] !== undefined) {
+    const mode = f['gameMode']
+    if (typeof mode !== 'string' || !(GAME_MODES as readonly string[]).includes(mode)) {
+      throw new IpcInputError(`gameMode must be one of: ${GAME_MODES.join(', ')}`)
+    }
+    result.gameMode = mode as CatalogueGetItemsInput['gameMode']
+  }
+
+  if (f['categories'] !== undefined) {
+    const categories = f['categories']
+    if (
+      !Array.isArray(categories) ||
+      categories.length > ITEM_CATEGORIES.length ||
+      !categories.every(
+        (entry) =>
+          typeof entry === 'string' && (ITEM_CATEGORIES as readonly string[]).includes(entry)
+      )
+    ) {
+      throw new IpcInputError(`categories must be a list of: ${ITEM_CATEGORIES.join(', ')}`)
+    }
+    result.categories = categories as CatalogueGetItemsInput['categories']
+  }
+
+  if (f['search'] !== undefined) {
+    const search = f['search']
+    if (typeof search !== 'string' || search.length > MAX_TEXT_LENGTH) {
+      throw new IpcInputError(`search must be a string of at most ${MAX_TEXT_LENGTH} characters`)
+    }
+    result.search = search
+  }
+
+  if (f['maxTownHall'] !== undefined) {
+    const level = positiveInt(f, 'maxTownHall')
+    if (level > MAX_TOWN_HALL_FILTER) {
+      throw new IpcInputError(`maxTownHall must be at most ${MAX_TOWN_HALL_FILTER}`)
+    }
+    result.maxTownHall = level
+  }
+
+  return result
+}
+
+export function parseCatalogueGetItemInput(value: unknown): CatalogueGetItemInput {
+  const f = asObject(value, ['id'], 'catalogue item query')
+  const id = f['id']
+  if (typeof id !== 'string' || !isValidItemId(id)) {
+    throw new IpcInputError('id must be a valid catalogue item id')
+  }
+  return { id }
 }
 
 /** For channels that take no payload: reject anything other than undefined/null. */

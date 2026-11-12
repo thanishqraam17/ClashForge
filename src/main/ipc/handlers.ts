@@ -1,4 +1,5 @@
 import type { ClashForgeDatabase } from '../../database/client/database'
+import type { CatalogueService } from '../../services/catalogue-service'
 import { BuildingValidationError } from '../../domain/building'
 import { HeroValidationError } from '../../domain/hero'
 import { ResearchValidationError } from '../../domain/research'
@@ -14,6 +15,8 @@ import {
 import {
   IpcInputError,
   parseBuildingSaveInput,
+  parseCatalogueGetItemInput,
+  parseCatalogueGetItemsInput,
   parseEmptyInput,
   parseHeroSaveInput,
   parseHistoryGetRecentInput,
@@ -99,10 +102,17 @@ function wrap<C extends IpcChannel>(
   }
 }
 
-export function createIpcHandlers(
-  database: ClashForgeDatabase,
-  logger: IpcLogger = console
-): IpcHandlerMap {
+export type IpcHandlerDependencies = {
+  database: ClashForgeDatabase
+  catalogue: CatalogueService
+  logger?: IpcLogger
+}
+
+export function createIpcHandlers({
+  database,
+  catalogue,
+  logger = console
+}: IpcHandlerDependencies): IpcHandlerMap {
   function requireVillage(): void {
     if (database.villages.getVillage() === null) {
       throw new IpcHandlerError(
@@ -222,6 +232,19 @@ export function createIpcHandlers(
         completedAt: toDateOrNull(input.completedAt)
       })
       return toUpgradeHistoryDto(entry)
+    }),
+
+    'catalogue:get-items': wrap('catalogue:get-items', logger, (payload) => {
+      return catalogue.getItems(parseCatalogueGetItemsInput(payload))
+    }),
+
+    'catalogue:get-item': wrap('catalogue:get-item', logger, (payload) => {
+      return catalogue.getItem(parseCatalogueGetItemInput(payload).id)
+    }),
+
+    'catalogue:get-dataset-info': wrap('catalogue:get-dataset-info', logger, (payload) => {
+      parseEmptyInput(payload)
+      return catalogue.getDatasetInfo()
     })
   }
 }

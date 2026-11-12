@@ -2,6 +2,8 @@ import { createDatabase, type ClashForgeDatabase } from '../database/client/data
 import { resolveProductionDatabasePath } from '../database/client/database-path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
+import { loadBundledGameCatalogue } from '../game-data'
+import { createCatalogueService } from '../services/catalogue-service'
 import { createIpcHandlers } from './ipc/handlers'
 import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
 
@@ -50,7 +52,10 @@ app.whenReady().then(() => {
 
   unregisterIpc = registerIpcHandlers(
     ipcMain,
-    createIpcHandlers(appDatabase),
+    createIpcHandlers({
+      database: appDatabase,
+      catalogue: createCatalogueService(loadBundledGameCatalogue())
+    }),
     createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
   )
 
