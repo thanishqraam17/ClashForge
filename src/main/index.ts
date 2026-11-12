@@ -72,7 +72,8 @@ app.whenReady().then(() => {
     createIpcHandlers({
       database: appDatabase,
       catalogue: createCatalogueService(gameData.catalogue),
-      townHall: createTownHallService(gameData.catalogue, gameData.townHallRules)
+      townHall: createTownHallService(gameData.catalogue, gameData.townHallRules),
+      assets
     }),
     createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
   )

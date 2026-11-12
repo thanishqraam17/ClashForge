@@ -12,11 +12,26 @@ import { parseGameCatalogue } from '../../domain/catalogue-validation'
 import { SAMPLE_ITEMS, SAMPLE_MANIFEST } from '../../game-data/fixtures/sample-catalogue'
 import { parseTownHallRules } from '../../domain/town-hall-rules-validation'
 import { SAMPLE_TOWN_HALL_RULES } from '../../game-data/fixtures/sample-town-hall-rules'
+import { createAssetService } from '../../services/asset-service'
 import { createCatalogueService } from '../../services/catalogue-service'
 import { createTownHallService } from '../../services/town-hall-service'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
 
 const sampleCatalogue = parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS)
+const assets = createAssetService({
+  assets: [
+    {
+      itemId: 'test-cannon',
+      level: null,
+      assetPath: 'defense/test-cannon.png',
+      sourceName: 'Test source',
+      sourceUrl: 'https://example.com/test',
+      attribution: 'Test attribution',
+      checksum: 'a'.repeat(64),
+      lastVerifiedAt: '2026-11-12'
+    }
+  ]
+})
 const catalogue = createCatalogueService(sampleCatalogue)
 const townHall = createTownHallService(
   sampleCatalogue,
@@ -53,7 +68,7 @@ describe('IPC handlers', () => {
     dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
     database = createDatabase({ dbPath: join(dir, 'test.db') })
     logger.error.mockReset()
-    handlers = createIpcHandlers({ database, catalogue, townHall, logger })
+    handlers = createIpcHandlers({ database, catalogue, townHall, assets, logger })
   })
 
   afterEach(() => {
@@ -324,6 +339,33 @@ describe('IPC handlers', () => {
       expect(result.ok ? 'ok' : result.error.code, `${channel} ${JSON.stringify(payload)}`).toBe(
         'VALIDATION_ERROR'
       )
+    }
+  })
+
+  it('resolves item images with fallback kinds and attributions', () => {
+    expect(expectOk(handlers['assets:resolve']({ itemId: 'test-cannon' }))).toEqual({
+      kind: 'canonical',
+      itemId: 'test-cannon',
+      url: 'clashforge-asset://bundled/defense/test-cannon.png',
+      level: null,
+      sourceName: 'Test source',
+      sourceUrl: 'https://example.com/test',
+      attribution: 'Test attribution',
+      lastVerifiedAt: '2026-11-12'
+    })
+    expect(expectOk(handlers['assets:resolve']({ itemId: 'test-cannon', level: 4 })).kind).toBe(
+      'generic'
+    )
+    expect(expectOk(handlers['assets:resolve']({ itemId: 'test-mortar', level: 1 }))).toEqual({
+      kind: 'placeholder',
+      itemId: 'test-mortar',
+      url: null
+    })
+    expect(expectOk(handlers['assets:get-attributions'](undefined))).toHaveLength(1)
+
+    for (const payload of [{ itemId: 'Bad Id' }, { itemId: 'test-cannon', level: 0 }, {}]) {
+      const result = handlers['assets:resolve'](payload)
+      expect(result.ok ? 'ok' : result.error.code).toBe('VALIDATION_ERROR')
     }
   })
 

@@ -47,6 +47,10 @@ const api: ClashForgeApi = {
     getItem: (input) => invoke(IPC_CHANNELS.townHallGetItem, input),
     getSummary: (input) => invoke(IPC_CHANNELS.townHallGetSummary, input),
     compare: (input) => invoke(IPC_CHANNELS.townHallCompare, input)
+  },
+  assets: {
+    resolve: (input) => invoke(IPC_CHANNELS.assetsResolve, input),
+    getAttributions: () => invoke(IPC_CHANNELS.assetsGetAttributions)
   }
 }
 

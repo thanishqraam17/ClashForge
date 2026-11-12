@@ -1,5 +1,7 @@
 import type { ClashForgeDatabase } from '../../database/client/database'
+import type { AssetService } from '../../services/asset-service'
 import type { CatalogueService } from '../../services/catalogue-service'
+import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
 import { BuildingValidationError } from '../../domain/building'
 import { HeroValidationError } from '../../domain/hero'
@@ -15,6 +17,7 @@ import {
 } from '../../shared/ipc/contracts'
 import {
   IpcInputError,
+  parseAssetsResolveInput,
   parseBuildingSaveInput,
   parseCatalogueGetItemInput,
   parseCatalogueGetItemsInput,
@@ -111,6 +114,7 @@ export type IpcHandlerDependencies = {
   database: ClashForgeDatabase
   catalogue: CatalogueService
   townHall: TownHallService
+  assets: AssetService
   logger?: IpcLogger
 }
 
@@ -118,6 +122,7 @@ export function createIpcHandlers({
   database,
   catalogue,
   townHall,
+  assets,
   logger = console
 }: IpcHandlerDependencies): IpcHandlerMap {
   function requireVillage(): void {
@@ -275,6 +280,30 @@ export function createIpcHandlers({
     'town-hall:compare': wrap('town-hall:compare', logger, (payload) => {
       const input = parseTownHallCompareInput(payload)
       return townHall.compare(input.fromTownHall, input.toTownHall, input.gameMode)
+    }),
+
+    'assets:resolve': wrap('assets:resolve', logger, (payload) => {
+      const input = parseAssetsResolveInput(payload)
+      const resolution = assets.resolve(input.itemId, input.level ?? null)
+      if (resolution.kind === 'placeholder') {
+        return { kind: 'placeholder', itemId: resolution.itemId, url: null }
+      }
+      const { entry } = resolution
+      return {
+        kind: resolution.kind,
+        itemId: resolution.itemId,
+        url: toAssetUrl(entry.assetPath),
+        level: entry.level,
+        sourceName: entry.sourceName,
+        sourceUrl: entry.sourceUrl,
+        attribution: entry.attribution,
+        lastVerifiedAt: entry.lastVerifiedAt
+      }
+    }),
+
+    'assets:get-attributions': wrap('assets:get-attributions', logger, (payload) => {
+      parseEmptyInput(payload)
+      return assets.getAttributions()
     })
   }
 }

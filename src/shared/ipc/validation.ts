@@ -2,6 +2,7 @@ import { GAME_MODES, ITEM_CATEGORIES, isValidItemId } from '../../domain/catalog
 import {
   HISTORY_RECENT_MAX_LIMIT,
   type CatalogueGetItemInput,
+  type AssetsResolveInput,
   type CatalogueGetItemsInput,
   type TownHallCompareInput,
   type TownHallGetItemInput,
@@ -359,6 +360,24 @@ export function parseTownHallCompareInput(value: unknown): TownHallCompareInput 
     toTownHall: townHallLevel(f, 'toTownHall'),
     ...optionalGameMode(f)
   }
+}
+
+const MAX_ASSET_LEVEL = 200
+
+export function parseAssetsResolveInput(value: unknown): AssetsResolveInput {
+  const f = asObject(value, ['itemId', 'level'], 'asset query')
+  const itemId = f['itemId']
+  if (typeof itemId !== 'string' || !isValidItemId(itemId)) {
+    throw new IpcInputError('itemId must be a valid catalogue item id')
+  }
+  if (f['level'] === undefined || f['level'] === null) {
+    return { itemId, level: null }
+  }
+  const level = positiveInt(f, 'level')
+  if (level > MAX_ASSET_LEVEL) {
+    throw new IpcInputError(`level must be at most ${MAX_ASSET_LEVEL}`)
+  }
+  return { itemId, level }
 }
 
 /** For channels that take no payload: reject anything other than undefined/null. */

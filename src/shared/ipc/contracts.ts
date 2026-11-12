@@ -39,7 +39,9 @@ export const IPC_CHANNELS = {
   townHallGetMax: 'town-hall:get-max',
   townHallGetItem: 'town-hall:get-item',
   townHallGetSummary: 'town-hall:get-summary',
-  townHallCompare: 'town-hall:compare'
+  townHallCompare: 'town-hall:compare',
+  assetsResolve: 'assets:resolve',
+  assetsGetAttributions: 'assets:get-attributions'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -144,6 +146,30 @@ export type TownHallComparisonDto = TownHallComparison
 /** Highest Town Hall with data per game mode; null when not yet known. */
 export type MaxTownHallDto = Record<GameMode, number | null>
 
+/**
+ * Image for an item. `kind` tells the UI how to present it:
+ * `generic` must be labelled as a generic (not level-specific) image, and
+ * `placeholder` means no image is available (url is null).
+ */
+export type AssetResolutionDto =
+  | {
+      kind: 'exact-level' | 'canonical' | 'generic'
+      itemId: string
+      url: string
+      level: number | null
+      sourceName: string
+      sourceUrl: string | null
+      attribution: string
+      lastVerifiedAt: string
+    }
+  | { kind: 'placeholder'; itemId: string; url: null }
+
+export type AttributionDto = {
+  sourceName: string
+  sourceUrl: string | null
+  attribution: string
+}
+
 // ---------------------------------------------------------------------------
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
@@ -238,6 +264,12 @@ export type TownHallCompareInput = {
   gameMode?: GameMode
 }
 
+export type AssetsResolveInput = {
+  itemId: string
+  /** Omit or null for the item's canonical image. */
+  level?: number | null
+}
+
 // ---------------------------------------------------------------------------
 // Results and errors
 // ---------------------------------------------------------------------------
@@ -284,6 +316,8 @@ export type IpcContract = {
   'town-hall:get-item': { request: TownHallGetItemInput; response: ItemAtTownHallDto | null }
   'town-hall:get-summary': { request: TownHallGetSummaryInput; response: TownHallSummaryDto }
   'town-hall:compare': { request: TownHallCompareInput; response: TownHallComparisonDto }
+  'assets:resolve': { request: AssetsResolveInput; response: AssetResolutionDto }
+  'assets:get-attributions': { request: void; response: AttributionDto[] }
 }
 
 export type IpcRequest<C extends IpcChannel> = IpcContract[C]['request']
@@ -325,5 +359,9 @@ export type ClashForgeApi = {
     getItem: (input: TownHallGetItemInput) => Promise<IpcResult<ItemAtTownHallDto | null>>
     getSummary: (input: TownHallGetSummaryInput) => Promise<IpcResult<TownHallSummaryDto>>
     compare: (input: TownHallCompareInput) => Promise<IpcResult<TownHallComparisonDto>>
+  }
+  assets: {
+    resolve: (input: AssetsResolveInput) => Promise<IpcResult<AssetResolutionDto>>
+    getAttributions: () => Promise<IpcResult<AttributionDto[]>>
   }
 }
