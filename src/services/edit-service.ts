@@ -1,16 +1,20 @@
+import { randomUUID } from 'crypto'
 import type { ClashForgeDatabase } from '../database/client/database'
 import {
   EDIT_NOTE_MAX_LENGTH,
   EditLogValidationError,
   type EditAction,
   type EditEntityType,
+  type EditLogInput,
   type JsonValue
 } from '../domain/edit-log'
 import type { GameCatalogue } from '../domain/catalogue'
 import { LOCAL_VILLAGE_ID, type Village, type VillagePersistInput } from '../domain/village'
 import {
   manualProvenance,
+  validateVillageItemInput,
   VillageStateValidationError,
+  type VillageItemPersistInput,
   type Builder,
   type ResearchState,
   type VillageItemInstance
@@ -18,6 +22,9 @@ import {
 import { findTownHallViolations } from '../import/import-planner'
 import type { TownHallService } from './town-hall-service'
 import {
+  CatalogueCoverageError,
+  INSTANCE_CATEGORIES,
+  VillageNotInitialisedError,
   VillageStateNotFoundError,
   type BuilderState,
   type ItemInstanceInput,
@@ -46,6 +53,46 @@ export type EditService = {
   setBuilderCount: (count: number, note?: string | null) => BuilderState[]
   saveResearch: (input: ResearchInput, note?: string | null) => ResearchState
   removeResearch: (itemId: string, note?: string | null) => void
+  /**
+   * Sets one level on chosen (or all) instances of one item. Upgrading
+   * instances must be listed in includeActiveUpgrades; their upgrade is ended.
+   * Setting an upgrading instance to its target level (finishing it) is never
+   * allowed in a bulk edit.
+   */
+  setItemLevels: (input: BulkLevelInput) => BulkEditResult
+  /**
+   * Adds or removes instances of one item to reach `count`. Additions are idle,
+   * at levelForAdditions, numbered from the lowest free number. Removals are
+   * the named instances, or by default idle instances, lowest level first,
+   * then highest instance number; upgrading instances only when named and
+   * included.
+   */
+  setItemCount: (input: BulkCountInput) => BulkEditResult
+}
+
+export type BulkLevelInput = {
+  itemId: string
+  level: number
+  instances: number[] | 'all'
+  includeActiveUpgrades?: number[]
+  note?: string | null
+}
+
+export type BulkCountInput = {
+  itemId: string
+  count: number
+  levelForAdditions?: number
+  removeInstances?: number[]
+  includeActiveUpgrades?: number[]
+  note?: string | null
+}
+
+/** batchId is null when nothing changed. */
+export type BulkEditResult = {
+  batchId: string | null
+  created: number[]
+  updated: number[]
+  removed: number[]
 }
 
 export type EditServiceDependencies = {
@@ -121,6 +168,17 @@ export function buildersLogState(builders: Builder[]): JsonValue {
 
 const same = (a: JsonValue | null, b: JsonValue | null): boolean => JSON.stringify(a) === JSON.stringify(b)
 
+/** Clears every upgrade field: the recorded upgrade is ended, not finished. */
+const endedUpgrade = () => ({
+  targetLevel: null,
+  upgradeStartedAt: null,
+  upgradeEndsAt: null,
+  builderId: null,
+  builderAssignment: null,
+  upgradeObservedTimer: null,
+  upgradeObservedAt: null
+})
+
 /** Checked before anything is written, so an invalid note fails even when nothing changes. */
 function checkNote(note: string | null): void {
   if (note === null) return
@@ -146,6 +204,119 @@ export function createEditService({ database, villageState, catalogue, townHall 
   }): void => {
     if (same(entry.before, entry.after)) return
     database.editLog.append({ villageId, batchId: null, ...entry })
+  }
+
+  // ---------------------------------------------------------------- bulk helpers
+
+  /** The item's current instances, after checking it can be bulk-edited at all. */
+  const requireBulkItem = (itemId: string): VillageItemInstance[] => {
+    const village = database.villages.getVillage()
+    if (village === null) throw new VillageNotInitialisedError()
+    const coverage = villageState.getCoverage()
+    if (!coverage.canRecordItems) throw new CatalogueCoverageError(coverage.reason!)
+    const item = catalogue.items.find((i) => i.id === itemId)
+    if (!item) throw new VillageStateValidationError(`"${itemId}" is not in the game catalogue`)
+    if (item.gameMode !== 'home-village') {
+      throw new VillageStateValidationError('Builder Base items are not tracked yet')
+    }
+    if (!INSTANCE_CATEGORIES.includes(item.category)) {
+      throw new VillageStateValidationError(`${item.name} is not recorded as building instances`)
+    }
+    const limits = townHall.getItemAt(item.id, village.townHallLevel)
+    if (limits === null) throw new CatalogueCoverageError(`No Town Hall rules exist for ${item.name}`)
+    if (!limits.available) {
+      throw new VillageStateValidationError(`${item.name} unlocks at Town Hall ${limits.unlocksAtTownHall}`)
+    }
+    return database.villageItems.listByItem(villageId, itemId)
+  }
+
+  /** Resolves a selection to instances of this item, rejecting duplicates and foreign ids. */
+  const selectInstances = (current: VillageItemInstance[], ids: number[] | 'all'): VillageItemInstance[] => {
+    if (ids === 'all') return current
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new VillageStateValidationError('instances must be "all" or a non-empty list of instance ids')
+    }
+    if (new Set(ids).size !== ids.length) throw new VillageStateValidationError('instances contains duplicates')
+    const byId = new Map(current.map((i) => [i.id, i]))
+    const foreign = ids.filter((id) => !byId.has(id))
+    if (foreign.length > 0) {
+      throw new VillageStateValidationError(`Not instances of this item: ${foreign.join(', ')}`)
+    }
+    return ids.map((id) => byId.get(id)!)
+  }
+
+  /** Validates the explicit active-upgrade opt-in list. */
+  const checkIncluded = (current: VillageItemInstance[], ids: number[]): Set<number> => {
+    if (!Array.isArray(ids)) throw new VillageStateValidationError('includeActiveUpgrades must be a list of instance ids')
+    const byId = new Map(current.map((i) => [i.id, i]))
+    for (const id of ids) {
+      const instance = byId.get(id)
+      if (!instance) throw new VillageStateValidationError(`includeActiveUpgrades: ${id} is not an instance of this item`)
+      if (instance.targetLevel === null) {
+        throw new VillageStateValidationError(`includeActiveUpgrades: #${instance.instanceNumber} has no active upgrade`)
+      }
+    }
+    return new Set(ids)
+  }
+
+  /** Validates the complete resulting village, then writes everything and logs one batch. */
+  const applyBulk = (
+    itemId: string,
+    plan: { updated: VillageItemInstance[]; created: VillageItemPersistInput[]; removed: VillageItemInstance[] },
+    note: string | null
+  ): BulkEditResult => {
+    if (plan.updated.length + plan.created.length + plan.removed.length === 0) {
+      return { batchId: null, created: [], updated: [], removed: [] }
+    }
+    for (const record of [...plan.updated, ...plan.created]) validateVillageItemInput(record)
+
+    // The whole village as it would be after the edit, checked before any write.
+    const removedIds = new Set(plan.removed.map((i) => i.id))
+    const updatedById = new Map(plan.updated.map((i) => [i.id, i]))
+    const resultingItems = [
+      ...database.villageItems
+        .listByVillage(villageId)
+        .filter((i) => !removedIds.has(i.id))
+        .map((i) => updatedById.get(i.id) ?? i),
+      ...plan.created
+    ]
+    const village = database.villages.getVillage()!
+    const violations = findTownHallViolations(
+      resultingItems,
+      database.researchStates.listByVillage(villageId),
+      townHall,
+      village.townHallLevel,
+      nameOf
+    )
+    if (violations.length > 0) {
+      throw new VillageStateValidationError(
+        `This edit would leave the village above Town Hall ${village.townHallLevel} limits: ${violations.join('; ')}`
+      )
+    }
+
+    const batchId = randomUUID()
+    const entries: EditLogInput[] = []
+    const result: BulkEditResult = { batchId, created: [], updated: [], removed: [] }
+    const base = { villageId, entityType: 'item-instance' as const, itemId, batchId, note }
+
+    for (const next of plan.updated) {
+      const before = database.villageItems.getById(next.id)!
+      const after = database.villageItems.update(next)
+      entries.push({ ...base, entityId: after.id, action: 'update', before: itemLogState(before), after: itemLogState(after) })
+      result.updated.push(after.id)
+    }
+    for (const gone of plan.removed) {
+      database.villageItems.delete(gone.id)
+      entries.push({ ...base, entityId: gone.id, action: 'delete', before: itemLogState(gone), after: null })
+      result.removed.push(gone.id)
+    }
+    for (const input of plan.created) {
+      const created = database.villageItems.create(input)
+      entries.push({ ...base, entityId: created.id, action: 'create', before: null, after: itemLogState(created) })
+      result.created.push(created.id)
+    }
+    database.editLog.appendMany(entries)
+    return result
   }
 
   return {
@@ -273,6 +444,120 @@ export function createEditService({ database, villageState, catalogue, townHall 
           after: null,
           note
         })
+      })
+    },
+
+    setItemLevels({ itemId, level, instances, includeActiveUpgrades = [], note = null }) {
+      checkNote(note)
+      return database.transaction(() => {
+        const current = requireBulkItem(itemId)
+        if (!Number.isSafeInteger(level) || level < 1) {
+          throw new VillageStateValidationError('level must be a positive integer')
+        }
+        const selected = selectInstances(current, instances)
+        const included = checkIncluded(current, includeActiveUpgrades)
+
+        const changed: VillageItemInstance[] = []
+        const blockedUpgrades: number[] = []
+        for (const instance of selected) {
+          if (instance.targetLevel === null) {
+            if (instance.level !== level) changed.push({ ...instance, level, ...manualProvenance() })
+            continue
+          }
+          if (!included.has(instance.id)) {
+            blockedUpgrades.push(instance.instanceNumber)
+            continue
+          }
+          if (level === instance.targetLevel) {
+            throw new VillageStateValidationError(
+              `${nameOf(itemId)} #${instance.instanceNumber}: a bulk edit never finishes an upgrade; edit it on its own`
+            )
+          }
+          changed.push({ ...instance, ...endedUpgrade(), level, ...manualProvenance() })
+        }
+        if (blockedUpgrades.length > 0) {
+          throw new VillageStateValidationError(
+            `${nameOf(itemId)} ${blockedUpgrades.map((n) => `#${n}`).join(', ')} ${blockedUpgrades.length === 1 ? 'has' : 'have'} an active upgrade; include ${blockedUpgrades.length === 1 ? 'it' : 'them'} explicitly to end the upgrade`
+          )
+        }
+
+        return applyBulk(itemId, { updated: changed, created: [], removed: [] }, note)
+      })
+    },
+
+    setItemCount({ itemId, count, levelForAdditions, removeInstances, includeActiveUpgrades = [], note = null }) {
+      checkNote(note)
+      return database.transaction(() => {
+        const current = requireBulkItem(itemId)
+        if (!Number.isSafeInteger(count) || count < 0) {
+          throw new VillageStateValidationError('count must be a non-negative integer')
+        }
+        const included = checkIncluded(current, includeActiveUpgrades)
+
+        if (count > current.length) {
+          if (removeInstances !== undefined) {
+            throw new VillageStateValidationError('removeInstances only applies when the count decreases')
+          }
+          if (levelForAdditions === undefined || !Number.isSafeInteger(levelForAdditions) || levelForAdditions < 1) {
+            throw new VillageStateValidationError('levelForAdditions must be a positive integer when the count increases')
+          }
+          const used = new Set(current.map((i) => i.instanceNumber))
+          const created: VillageItemPersistInput[] = []
+          for (let n = 1; created.length < count - current.length; n += 1) {
+            if (used.has(n)) continue
+            created.push({
+              villageId,
+              itemId,
+              instanceNumber: n,
+              level: levelForAdditions,
+              targetLevel: null,
+              upgradeStartedAt: null,
+              upgradeEndsAt: null,
+              builderId: null,
+              builderAssignment: null,
+              upgradeObservedTimer: null,
+              upgradeObservedAt: null,
+              ...manualProvenance()
+            })
+          }
+          return applyBulk(itemId, { updated: [], created, removed: [] }, note)
+        }
+
+        if (count === current.length) {
+          if (removeInstances !== undefined && removeInstances.length > 0) {
+            throw new VillageStateValidationError('removeInstances only applies when the count decreases')
+          }
+          return { batchId: null, created: [], updated: [], removed: [] }
+        }
+
+        const toRemove = current.length - count
+        let removed: VillageItemInstance[]
+        if (removeInstances !== undefined) {
+          removed = selectInstances(current, removeInstances)
+          if (removed.length !== toRemove) {
+            throw new VillageStateValidationError(
+              `removeInstances must name exactly ${toRemove} instance${toRemove === 1 ? '' : 's'}`
+            )
+          }
+          const blocked = removed.filter((i) => i.targetLevel !== null && !included.has(i.id))
+          if (blocked.length > 0) {
+            throw new VillageStateValidationError(
+              `${nameOf(itemId)} ${blocked.map((i) => `#${i.instanceNumber}`).join(', ')} ${blocked.length === 1 ? 'has' : 'have'} an active upgrade; include ${blocked.length === 1 ? 'it' : 'them'} explicitly to remove ${blocked.length === 1 ? 'it' : 'them'}`
+            )
+          }
+        } else {
+          // Default: idle instances only, lowest level first, then highest instance number.
+          const idle = current
+            .filter((i) => i.targetLevel === null)
+            .sort((a, b) => a.level - b.level || b.instanceNumber - a.instanceNumber)
+          if (idle.length < toRemove) {
+            throw new VillageStateValidationError(
+              `Only ${idle.length} ${nameOf(itemId)} ${idle.length === 1 ? 'is' : 'are'} idle; name the instances to remove explicitly`
+            )
+          }
+          removed = idle.slice(0, toRemove)
+        }
+        return applyBulk(itemId, { updated: [], created: [], removed }, note)
       })
     }
   }

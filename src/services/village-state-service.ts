@@ -45,7 +45,7 @@ export class VillageStateNotFoundError extends Error {
 // ---------------------------------------------------------------------------
 
 /** Builder-upgraded categories stored as item instances. */
-const INSTANCE_CATEGORIES: readonly ItemCategory[] = [
+export const INSTANCE_CATEGORIES: readonly ItemCategory[] = [
   'town-hall',
   'resource',
   'army',
