@@ -302,6 +302,79 @@ describe('matchInstances: removals across levels (audit N3)', () => {
   })
 })
 
+describe('matchInstances: removal choices among released upgrades (audit A1)', () => {
+  const ESTIMATE = { source: 'timer-estimate' as const, confidence: 0.3, confirmed: false }
+
+  it('asks which released upgrade is removed when provenance differs', () => {
+    // Neither old nor target levels are exported, so both upgrades are released; one survives at 9.
+    expect(outcomes([9], [inst(1, 3, { target: 4 }), inst(2, 5, { target: 6, ...ESTIMATE })]).map(describe_)).toEqual([
+      ['#2 5->9 (upgrade ended)', '#1 removed (upgrade ended)'],
+      ['#1 3->9 (upgrade ended)', '#2 removed (upgrade ended)']
+    ])
+  })
+
+  it('asks in the other provenance order too', () => {
+    expect(outcomes([9], [inst(1, 3, { target: 4, ...ESTIMATE }), inst(2, 5, { target: 6 })]).map(describe_)).toEqual([
+      ['#2 5->9 (upgrade ended)', '#1 removed (upgrade ended)'],
+      ['#1 3->9 (upgrade ended)', '#2 removed (upgrade ended)']
+    ])
+  })
+
+  it('removes the lowest-level released upgrade automatically when provenance is equal', () => {
+    expect(outcomes([9], [inst(1, 3, { target: 4 }), inst(2, 5, { target: 6 })]).map(describe_)).toEqual([
+      ['#2 5->9 (upgrade ended)', '#1 removed (upgrade ended)']
+    ])
+  })
+
+  it('enumerates choices among several released upgrades in different groups', () => {
+    // Three released upgrades in three groups, one survives: three interpretations.
+    const result = outcomes(
+      [9],
+      [
+        inst(1, 3, { target: 4 }),
+        inst(2, 5, { target: 6, ...ESTIMATE }),
+        inst(3, 7, { target: 8, confirmed: false })
+      ]
+    )
+    expect(result).toHaveLength(3)
+    expect(result.map((ops) => ops.levelChanges.map((c) => c.instanceNumber))).toEqual([[3], [2], [1]])
+    for (const ops of result) expect(ops.removals.every((r) => r.endsUpgrade)).toBe(true)
+  })
+
+  it('combines released choices with idle provenance choices', () => {
+    // Released #1 (confirmed) and #2 (estimate); idle #3 (confirmed) and #4 (estimate) at 7.
+    // Export {7, 8, 9}: one idle stays at 7; the other idle plus one released take 8 and 9; one released goes.
+    const result = outcomes(
+      [7, 8, 9],
+      [
+        inst(1, 3, { target: 4 }),
+        inst(2, 5, { target: 6, ...ESTIMATE }),
+        inst(3, 7),
+        inst(4, 7, ESTIMATE)
+      ]
+    )
+    expect(result).toHaveLength(4) // 2 released choices x 2 idle choices
+    for (const ops of result) {
+      expect(ops.finalLevels.map((f) => f.level).sort()).toEqual([7, 8, 9])
+      expect(ops.removals).toHaveLength(1)
+      expect(ops.removals[0]!.endsUpgrade).toBe(true)
+    }
+  })
+
+  it('blocks when released and idle choices together exceed the limit', () => {
+    const groups = [{}, ESTIMATE, { confirmed: false }]
+    // Three released (three groups), two must go: 3 choices. Idle at 7 in three groups, one kept: 3 choices.
+    const current = [
+      ...groups.map((g, i) => inst(i + 1, 1 + 2 * i, { target: 2 + 2 * i, ...g })),
+      ...groups.map((g, i) => inst(i + 4, 7, g))
+    ]
+    expect(matchInstances([7, 9, 9, 9], current)).toEqual({
+      kind: 'too-many',
+      reason: 'More than 8 possible interpretations; correct this item manually'
+    })
+  })
+})
+
 describe('matchInstances: limits and determinism', () => {
   it('stops at the interpretation limit instead of enumerating everything', () => {
     // Four upgrades, export {3,3,4,4}: which two are still upgrading -> C(4,2) = 6, within the limit.

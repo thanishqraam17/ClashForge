@@ -173,6 +173,24 @@ describe('buildImportPlan', () => {
     expect(change.interpretations).toHaveLength(2)
   })
 
+  it('gives every released upgrade its own decision when the outcome is automatic (audit A1)', () => {
+    const builders = villageState.setBuilderCount(2)
+    for (const [n, level, b] of [[1, 2, 0], [2, 4, 1]] as const) {
+      villageState.saveItemInstance({
+        itemId: 'test-cannon', instanceNumber: n, level, targetLevel: level + 1,
+        upgradeStartedAt: null, upgradeEndsAt: null, builderId: builders[b]!.id
+      })
+    }
+    // Equal provenance, neither old nor target level exported: lowest (#1) removed, #2 re-levelled.
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 6, cnt: 1 }] }))
+    expect(change(p, 'instances:test-cannon:levels').conflicts).toEqual([
+      expect.objectContaining({ kind: 'item-upgrade', instanceNumber: 2, exportEffect: 'set level to 6 and end the recorded upgrade' })
+    ])
+    expect(change(p, 'instances:test-cannon:remove').conflicts).toEqual([
+      expect.objectContaining({ kind: 'item-upgrade', instanceNumber: 1, exportEffect: 'remove the instance and its recorded upgrade' })
+    ])
+  })
+
   it('turns any change to an active upgrade into a conflict, whatever its source', () => {
     addCannons([3, 3], 0)
     const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 5, cnt: 2 }] }))
