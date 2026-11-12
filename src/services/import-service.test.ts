@@ -203,6 +203,58 @@ describe('ImportService', () => {
       expect(t.database.villages.getVillage()!.townHallLevel).toBe(7)
     })
 
+    describe('Town Hall downgrade', () => {
+      beforeEach(() => {
+        for (const n of [1, 2, 3]) {
+          villageState.saveItemInstance({
+            itemId: 'test-cannon', instanceNumber: n, level: 6, targetLevel: null,
+            upgradeStartedAt: null, upgradeEndsAt: null, builderId: null
+          })
+        }
+      })
+
+      it('refuses the audit case: three level-6 cannons and an export saying Town Hall 2', () => {
+        const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }] }))
+        expect(plan.changes.find((c) => c.id === 'town-hall')!.blockedReason).toMatch(/above its limits/)
+        expect(() => imports.apply({ importId, acceptedChangeIds: ['town-hall'], conflictResolutions: {} })).toThrow(
+          /is blocked/
+        )
+        expect(t.database.villages.getVillage()!.townHallLevel).toBe(5)
+      })
+
+      it('rolls back when the fixing changes are declined', () => {
+        const { importId } = imports.previewText(
+          exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }, { data: ID.cannon, lvl: 2, cnt: 2 }] })
+        )
+        expect(() => imports.apply({ importId, acceptedChangeIds: ['town-hall'], conflictResolutions: {} })).toThrow(
+          'Town Hall 2 would leave the village above its limits: Test Cannon: 3 recorded, limit 2; Test Cannon: level 6 recorded, limit 2'
+        )
+        expect(t.database.villages.getVillage()!.townHallLevel).toBe(5)
+        expect(cannons().map((c) => c.level)).toEqual([6, 6, 6])
+        expect(t.database.snapshots.list(LOCAL_VILLAGE_ID)).toEqual([])
+        expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+      })
+
+      it('applies when the village fits the new Town Hall', () => {
+        const { importId } = imports.previewText(
+          exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }, { data: ID.cannon, lvl: 2, cnt: 2 }] })
+        )
+        imports.apply({
+          importId,
+          acceptedChangeIds: ['town-hall', 'instances:test-cannon:levels', 'instances:test-cannon:remove'],
+          conflictResolutions: {}
+        })
+        expect(t.database.villages.getVillage()!.townHallLevel).toBe(2)
+        expect(cannons().map((c) => c.level)).toEqual([2, 2])
+      })
+    })
+
+    it('still applies a Town Hall increase', () => {
+      const { importId } = imports.previewText(exportText({ buildings: [{ data: ID.hall, lvl: 6, cnt: 1 }] }))
+      imports.apply({ importId, acceptedChangeIds: ['town-hall'], conflictResolutions: {} })
+      expect(t.database.villages.getVillage()!.townHallLevel).toBe(6)
+    })
+
     it('protects active research and applies research levels', () => {
       const village = t.database.villages.getVillage()!
       t.database.villages.updateVillage({ ...village, townHallLevel: 6 })

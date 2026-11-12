@@ -141,6 +141,60 @@ export class UnsupportedSemanticsError extends Error {
   }
 }
 
+/**
+ * Everything in the given items and research that would break the limits of
+ * `townHallLevel`: locked items, too many instances, or levels (current or
+ * upgrade target) above the maximum. Used to keep imports from leaving the
+ * village in a state its Town Hall does not allow.
+ */
+export function findTownHallViolations(
+  items: Pick<VillageItemInstance, 'itemId' | 'level' | 'targetLevel'>[],
+  research: Pick<ResearchState, 'itemId' | 'level' | 'targetLevel'>[],
+  townHall: TownHallService,
+  townHallLevel: number,
+  nameOf: (itemId: string) => string
+): string[] {
+  const limitsAt = (itemId: string) => {
+    try {
+      return townHall.getItemAt(itemId, townHallLevel)
+    } catch {
+      return null
+    }
+  }
+  const violations: string[] = []
+  const byItem = new Map<string, Array<Pick<VillageItemInstance, 'level' | 'targetLevel'>>>()
+  for (const item of items) byItem.set(item.itemId, [...(byItem.get(item.itemId) ?? []), item])
+
+  const check = (itemId: string, count: number, levels: number[]) => {
+    const name = nameOf(itemId)
+    const limits = limitsAt(itemId)
+    if (limits === null) {
+      violations.push(`${name}: no Town Hall ${townHallLevel} rules`)
+    } else if (!limits.available) {
+      violations.push(`${name}: unlocks at Town Hall ${limits.unlocksAtTownHall}`)
+    } else {
+      if (count > limits.maxQuantity) {
+        violations.push(`${name}: ${count} recorded, limit ${limits.maxQuantity}`)
+      }
+      const highest = Math.max(...levels)
+      if (highest > limits.maxLevel) {
+        violations.push(`${name}: level ${highest} recorded, limit ${limits.maxLevel}`)
+      }
+    }
+  }
+  for (const [itemId, instances] of [...byItem.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    check(
+      itemId,
+      instances.length,
+      instances.flatMap((i) => (i.targetLevel === null ? [i.level] : [i.level, i.targetLevel]))
+    )
+  }
+  for (const entry of [...research].sort((a, b) => a.itemId.localeCompare(b.itemId))) {
+    check(entry.itemId, 1, entry.targetLevel === null ? [entry.level] : [entry.level, entry.targetLevel])
+  }
+  return violations
+}
+
 /** Fingerprint of the state a plan was computed against, to detect stale previews. */
 export function fingerprintState(state: PlanState): string {
   const canonical = {
@@ -261,6 +315,24 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
   let effectiveTownHall = currentTownHall
   let townHallChangeId: string | null = null
 
+  /**
+   * A Town Hall change is only valid if everything the export does not cover
+   * still fits the new limits; covered items are validated by their own changes.
+   */
+  const townHallBlock = (level: number): string | null => {
+    const nameOf = (id: string) => catalogue.items.find((i) => i.id === id)?.name ?? id
+    const violations = findTownHallViolations(
+      state.items.filter((i) => !instanceEntries.has(i.itemId)),
+      state.research.filter((r) => !researchEntries.has(r.itemId)),
+      townHall,
+      level,
+      nameOf
+    )
+    return violations.length === 0
+      ? null
+      : `Town Hall ${level} would leave the village above its limits: ${violations.join('; ')}`
+  }
+
   if (townHallEntries.length === 1 && townHallEntries[0]!.entry.level !== null && rule(townHallEntries[0]!.entry.section, 'level')) {
     const { entry, item } = townHallEntries[0]!
     const exportedLevel = entry.level!
@@ -282,7 +354,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
         blockedReason:
           coverage.maxTownHall !== null && exportedLevel > coverage.maxTownHall
             ? `Town Hall ${exportedLevel} is newer than the bundled game data`
-            : null,
+            : townHallBlock(exportedLevel),
         dependsOn: null
       })
     }

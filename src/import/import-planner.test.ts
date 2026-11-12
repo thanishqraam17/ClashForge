@@ -242,6 +242,43 @@ describe('buildImportPlan', () => {
     expect(change(p, 'research:test-heal-spell')).toMatchObject({ blockedReason: null, dependsOn: 'town-hall' })
   })
 
+  it('blocks a Town Hall downgrade that would leave uncovered items above the limits', () => {
+    for (const n of [1, 2, 3]) {
+      villageState.saveItemInstance({
+        itemId: 'test-cannon', instanceNumber: n, level: 6, targetLevel: null,
+        upgradeStartedAt: null, upgradeEndsAt: null, builderId: null
+      })
+    }
+    const p = plan(exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }] }))
+    expect(change(p, 'town-hall').blockedReason).toBe(
+      'Town Hall 2 would leave the village above its limits: Test Cannon: 3 recorded, limit 2; Test Cannon: level 6 recorded, limit 2'
+    )
+  })
+
+  it('allows a Town Hall downgrade when the export itself covers the affected items', () => {
+    for (const n of [1, 2, 3]) {
+      villageState.saveItemInstance({
+        itemId: 'test-cannon', instanceNumber: n, level: 6, targetLevel: null,
+        upgradeStartedAt: null, upgradeEndsAt: null, builderId: null
+      })
+    }
+    const p = plan(exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }, { data: ID.cannon, lvl: 2, cnt: 2 }] }))
+    expect(change(p, 'town-hall').blockedReason).toBeNull()
+    expect(change(p, 'instances:test-cannon:levels').blockedReason).toBeNull()
+  })
+
+  it('counts upgrade targets when checking a Town Hall downgrade', () => {
+    const [b] = villageState.setBuilderCount(1)
+    villageState.saveItemInstance({
+      itemId: 'test-cannon', instanceNumber: 1, level: 2, targetLevel: 3,
+      upgradeStartedAt: null, upgradeEndsAt: null, builderId: b!.id
+    })
+    const p = plan(exportText({ buildings: [{ data: ID.hall, lvl: 2, cnt: 1 }] }))
+    expect(change(p, 'town-hall').blockedReason).toBe(
+      'Town Hall 2 would leave the village above its limits: Test Cannon: level 3 recorded, limit 2'
+    )
+  })
+
   it('blocks changes that break Town Hall limits', () => {
     const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 9, cnt: 1 }, { data: ID.knight, lvl: 1, cnt: 1 }] }))
     expect(change(p, 'instances:test-cannon:add').blockedReason).toBe(

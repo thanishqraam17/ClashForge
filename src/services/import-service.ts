@@ -9,6 +9,7 @@ import type { Provenance } from '../domain/village-state'
 import { parseExport, type ExportParseIssue } from '../import/export-parser'
 import {
   buildImportPlan,
+  findTownHallViolations,
   fingerprintState,
   type ConflictResolution,
   type ImportChange,
@@ -340,6 +341,24 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
               )
               break
             }
+          }
+        }
+
+        // A Town Hall change must leave the whole village within the new limits,
+        // including items whose export changes were not accepted.
+        if (acceptedIds.has('town-hall')) {
+          const village = database.villages.getVillage()!
+          const violations = findTownHallViolations(
+            database.villageItems.listByVillage(villageId),
+            database.researchStates.listByVillage(villageId),
+            townHall,
+            village.townHallLevel,
+            (id) => catalogue.items.find((i) => i.id === id)?.name ?? id
+          )
+          if (violations.length > 0) {
+            throw new ImportApplyError(
+              `Town Hall ${village.townHallLevel} would leave the village above its limits: ${violations.join('; ')}`
+            )
           }
         }
 
