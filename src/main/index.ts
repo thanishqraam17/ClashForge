@@ -1,14 +1,19 @@
 import { createDatabase, type ClashForgeDatabase } from '../database/client/database'
 import { resolveProductionDatabasePath } from '../database/client/database-path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol, shell } from 'electron'
 import { join } from 'path'
 import { loadBundledGameData } from '../game-data'
+import { createAssetService } from '../services/asset-service'
 import { createCatalogueService } from '../services/catalogue-service'
+import { createAssetFileStore } from './assets/asset-file-store'
+import { handleAssetProtocol, registerAssetSchemePrivileges } from './assets/asset-protocol'
 import { createTownHallService } from '../services/town-hall-service'
 import { createIpcHandlers } from './ipc/handlers'
 import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
 
 const isDev = !app.isPackaged
+
+registerAssetSchemePrivileges(protocol)
 
 let appDatabase: ClashForgeDatabase | null = null
 let unregisterIpc: (() => void) | null = null
@@ -52,6 +57,15 @@ app.whenReady().then(() => {
   appDatabase.healthCheck()
 
   const gameData = loadBundledGameData()
+  const assets = createAssetService(gameData.assets)
+  handleAssetProtocol(
+    protocol,
+    createAssetFileStore({
+      // Bundled artwork directory. Packaging (Phase 16) must ship this folder alongside the app.
+      directory: join(app.getAppPath(), 'src', 'game-data', 'assets'),
+      assets
+    })
+  )
 
   unregisterIpc = registerIpcHandlers(
     ipcMain,
