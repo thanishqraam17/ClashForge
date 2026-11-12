@@ -196,6 +196,18 @@ describe('buildImportPlan', () => {
     expect(p.observations[0]).toMatchObject({ timer: 600, timerDisposition: 'ignored-unverified' })
   })
 
+  it('does not treat a timer as an upgrade unless its rule is verified (not merely observed)', () => {
+    const observedTimers = parseExportSemantics({
+      ...JSON.parse(JSON.stringify(SEMANTICS)),
+      rules: SEMANTICS.rules.map((r) =>
+        r.meaning === 'upgrade-remaining-seconds' ? { ...r, status: 'observed', evidence: 'test' } : r
+      )
+    })
+    const p = plan(exportText({ traps: [{ data: ID.spikeTrap, lvl: 1, timer: 600 }] }), observedTimers)
+    expect(p.changes.some((c) => c.kind === 'imported-upgrades')).toBe(false)
+    expect(p.unverifiedTimers).toHaveLength(1)
+  })
+
   it('creates imported upgrades with the raw timer only when timers are verified', () => {
     const p = plan(exportText({ traps: [{ data: ID.spikeTrap, lvl: 1, timer: 600 }] }), VERIFIED_TIMERS)
     expect(change(p, 'instances:test-spike-trap:upgrades-new')).toMatchObject({

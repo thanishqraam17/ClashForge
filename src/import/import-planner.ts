@@ -174,6 +174,11 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
     const r = findRule(semantics, section, meaning)
     return r && isUsableStatus(r.status) ? r : null
   }
+  /** Timers are only ever interpreted through a rule marked `verified`. */
+  const verifiedTimerRule = (section: string) => {
+    const r = findRule(semantics, section, 'upgrade-remaining-seconds')
+    return r && r.status === 'verified' ? r : null
+  }
 
   // ---------------------------------------------------------------- classify entries
   const observations: ExportObservation[] = []
@@ -186,7 +191,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
 
   for (const entry of parsed.entries) {
     const scope = semantics.sections[entry.section]
-    const timerRule = entry.timer !== null ? rule(entry.section, 'upgrade-remaining-seconds') : null
+    const timerRule = entry.timer !== null ? verifiedTimerRule(entry.section) : null
     let classification: ObservationClassification
     let mappedItemId: string | null = null
 
@@ -333,7 +338,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
         inferredCounts.push({ section: entry.section, position: entry.position, dataId: entry.dataId })
         count = 1
       }
-      const timerRule = entry.timer !== null ? rule(entry.section, 'upgrade-remaining-seconds') : null
+      const timerRule = entry.timer !== null ? verifiedTimerRule(entry.section) : null
       if (timerRule) confidences.push(timerRule.confidence)
       for (let i = 0; i < count; i += 1) {
         exported.push({
