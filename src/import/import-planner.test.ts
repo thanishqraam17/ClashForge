@@ -148,6 +148,31 @@ describe('buildImportPlan', () => {
     })
   })
 
+  it('never pins a possibly completed upgrade on an idle instance (audit F1)', () => {
+    addCannons([3, 3], 0) // #1 upgrading 3 -> 4, #2 idle at 3
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }, { data: ID.cannon, lvl: 4, cnt: 1 }] }))
+    expect(p.changes.map((c) => c.kind)).toEqual(['ambiguous-instances'])
+    const change = p.changes[0] as Extract<ImportChange, { kind: 'ambiguous-instances' }>
+    expect(change.interpretations).toHaveLength(2)
+    expect(change.interpretations[1]!.operations.completions).toEqual([
+      expect.objectContaining({ instanceNumber: 1, fromLevel: 3, toLevel: 4 })
+    ])
+  })
+
+  it('uses exported multiplicity: {3, 3} leaves the upgrade alone with no ambiguity', () => {
+    addCannons([3, 3], 0)
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 2 }] }))
+    expect(p.changes).toEqual([])
+  })
+
+  it('uses inferred counts as multiplicity too', () => {
+    addCannons([3, 3], 0)
+    const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 3 }, { data: ID.cannon, lvl: 4 }] }))
+    const change = p.changes[0] as Extract<ImportChange, { kind: 'ambiguous-instances' }>
+    expect(change).toMatchObject({ kind: 'ambiguous-instances', basis: 'inferred', confidence: 0.8 })
+    expect(change.interpretations).toHaveLength(2)
+  })
+
   it('turns any change to an active upgrade into a conflict, whatever its source', () => {
     addCannons([3, 3], 0)
     const p = plan(exportText({ buildings: [{ data: ID.cannon, lvl: 5, cnt: 2 }] }))

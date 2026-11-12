@@ -150,16 +150,146 @@ describe('ImportService', () => {
       ])
     })
 
-    it('ends an active upgrade only when told to apply the export', () => {
+    it('marks an upgrade finished only when told to, when the export shows its target level', () => {
       addCannons([3], 0)
       const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 4, cnt: 1 }] }))
+      const complete = plan.changes.find((c) => c.id === 'instances:test-cannon:complete')!
+      expect(complete).toMatchObject({ kind: 'complete-upgrades', requiresIndividualAcceptance: true })
+      expect(() =>
+        imports.apply({ importId, acceptedChangeIds: [complete.id], conflictResolutions: {} })
+      ).toThrow(/needs a resolution/)
+      imports.apply({
+        importId,
+        acceptedChangeIds: [complete.id],
+        conflictResolutions: { [conflictKey(complete.conflicts[0]!)]: 'apply-export' }
+      })
+      expect(cannons()[0]).toMatchObject({ level: 4, targetLevel: null, builderId: null, builderAssignment: null })
+    })
+
+    it('ends an active upgrade only when told to, when the export shows another level', () => {
+      addCannons([3], 0)
+      const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 5, cnt: 1 }] }))
       const levels = plan.changes.find((c) => c.id === 'instances:test-cannon:levels')!
       imports.apply({
         importId,
         acceptedChangeIds: [levels.id],
         conflictResolutions: { [conflictKey(levels.conflicts[0]!)]: 'apply-export' }
       })
-      expect(cannons()[0]).toMatchObject({ level: 4, targetLevel: null, builderId: null, builderAssignment: null })
+      expect(cannons()[0]).toMatchObject({ level: 5, targetLevel: null, builderId: null })
+    })
+
+    describe('ambiguous matches (audit F1/F2)', () => {
+      const AMBIGUOUS = 'instances:test-cannon:ambiguous'
+
+      function previewAuditCase() {
+        addCannons([3, 3], 0) // #1 upgrading 3 -> 4, #2 idle at 3
+        return imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }, { data: ID.cannon, lvl: 4, cnt: 1 }] }))
+      }
+
+      it('surfaces the audit case as an explicit choice and changes nothing by default', () => {
+        const { importId, plan } = previewAuditCase()
+        expect(plan.changes.map((c) => c.id)).toEqual([AMBIGUOUS])
+        const change = plan.changes[0]!
+        expect(change).toMatchObject({ kind: 'ambiguous-instances', requiresIndividualAcceptance: true, conflicts: [] })
+        expect((change as Extract<typeof change, { kind: 'ambiguous-instances' }>).interpretations.map((i) => i.summary)).toEqual([
+          ['Test Cannon #1: still upgrading 3 → 4', 'Test Cannon #2: level 3 → 4'],
+          ['Test Cannon #1: upgrade to level 4 finished']
+        ])
+        imports.apply({ importId, acceptedChangeIds: [], conflictResolutions: {} })
+        expect(cannons().map((c) => [c.level, c.targetLevel])).toEqual([[3, 4], [3, null]])
+      })
+
+      it('applies the "completed" interpretation exactly', () => {
+        const { importId } = previewAuditCase()
+        imports.apply({ importId, acceptedChangeIds: [AMBIGUOUS], conflictResolutions: {}, ambiguityChoices: { [AMBIGUOUS]: 'i2' } })
+        expect(cannons().map((c) => [c.instanceNumber, c.level, c.targetLevel, c.source])).toEqual([
+          [1, 4, null, 'data-export'],
+          [2, 3, null, 'manual']
+        ])
+      })
+
+      it('applies the "still upgrading" interpretation exactly', () => {
+        const { importId } = previewAuditCase()
+        const applied = imports.apply({
+          importId,
+          acceptedChangeIds: [AMBIGUOUS],
+          conflictResolutions: {},
+          ambiguityChoices: { [AMBIGUOUS]: 'i1' }
+        })
+        expect(cannons().map((c) => [c.instanceNumber, c.level, c.targetLevel, c.source])).toEqual([
+          [1, 3, 4, 'manual'],
+          [2, 4, null, 'data-export']
+        ])
+        expect((applied.applyResult as { ambiguityChoices: Record<string, string> }).ambiguityChoices).toEqual({
+          [AMBIGUOUS]: 'i1'
+        })
+      })
+
+      it('rejects missing, unknown, invalid and extra choices, and contradicting resolutions', () => {
+        const { importId } = previewAuditCase()
+        const apply = (ambiguityChoices: Record<string, string>, conflictResolutions = {}, acceptedChangeIds = [AMBIGUOUS]) =>
+          imports.apply({ importId, acceptedChangeIds, conflictResolutions, ambiguityChoices })
+        expect(() => apply({})).toThrow(`Change "${AMBIGUOUS}" needs a chosen interpretation`)
+        expect(() => apply({ [AMBIGUOUS]: 'i9' })).toThrow(`"i9" is not an interpretation of "${AMBIGUOUS}"`)
+        expect(() => apply({ [AMBIGUOUS]: 'i1', other: 'i1' })).toThrow('"other" is not an accepted ambiguous change')
+        expect(() => apply({ [AMBIGUOUS]: 'i1' }, {}, [])).toThrow(`"${AMBIGUOUS}" is not an accepted ambiguous change`)
+        const upgradingId = t.database.villageItems.listByItem(LOCAL_VILLAGE_ID, 'test-cannon')[0]!.id
+        expect(() => apply({ [AMBIGUOUS]: 'i2' }, { [`item-upgrade:${upgradingId}`]: 'keep-current' })).toThrow(
+          `Conflict "item-upgrade:${upgradingId}" contradicts the chosen interpretation, which already decides it`
+        )
+        expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+        expect(cannons().map((c) => [c.level, c.targetLevel])).toEqual([[3, 4], [3, null]])
+      })
+
+      it('surfaces same-level instances with different provenance (F2)', () => {
+        villageState.saveItemInstance({ itemId: 'test-cannon', instanceNumber: 1, level: 3, targetLevel: null, upgradeStartedAt: null, upgradeEndsAt: null, builderId: null })
+        villageState.saveItemInstance(
+          { itemId: 'test-cannon', instanceNumber: 2, level: 3, targetLevel: null, upgradeStartedAt: null, upgradeEndsAt: null, builderId: null },
+          { source: 'timer-estimate', confidence: 0.3, confirmedAt: null }
+        )
+        const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }, { data: ID.cannon, lvl: 5, cnt: 1 }] }))
+        const change = plan.changes.find((c) => c.id === AMBIGUOUS) as Extract<(typeof plan.changes)[number], { kind: 'ambiguous-instances' }>
+        expect(change.interpretations.map((i) => i.summary)).toEqual([
+          ['Test Cannon #2: level 3 → 5'],
+          ['Test Cannon #1: level 3 → 5']
+        ])
+        imports.apply({ importId, acceptedChangeIds: [AMBIGUOUS], conflictResolutions: {}, ambiguityChoices: { [AMBIGUOUS]: 'i2' } })
+        expect(cannons().map((c) => [c.instanceNumber, c.level, c.source])).toEqual([
+          [1, 5, 'data-export'],
+          [2, 3, 'timer-estimate']
+        ])
+      })
+
+      it('rolls back an ambiguous apply that fails after some operations were written', () => {
+        addCannons([3, 3], 0)
+        // Export {3, 4, 4}: both interpretations add a third cannon after the completion/level change.
+        const failing = createImportService({
+          database: t.database,
+          catalogue,
+          townHallRules,
+          semantics: SEMANTICS,
+          townHall,
+          villageState: {
+            ...villageState,
+            saveItemInstance: () => {
+              throw new Error('simulated failure while adding an instance')
+            }
+          }
+        })
+        const { importId } = failing.previewText(
+          exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }, { data: ID.cannon, lvl: 4, cnt: 2 }] })
+        )
+        expect(() =>
+          failing.apply({ importId, acceptedChangeIds: [AMBIGUOUS], conflictResolutions: {}, ambiguityChoices: { [AMBIGUOUS]: 'i2' } })
+        ).toThrow('simulated failure while adding an instance')
+        // The completion written before the failure is rolled back with everything else.
+        expect(cannons().map((c) => [c.instanceNumber, c.level, c.targetLevel, c.source])).toEqual([
+          [1, 3, 4, 'manual'],
+          [2, 3, null, 'manual']
+        ])
+        expect(t.database.snapshots.list(LOCAL_VILLAGE_ID)).toEqual([])
+        expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+      })
     })
 
     it('removes instances only when that change is accepted', () => {

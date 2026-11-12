@@ -60,10 +60,16 @@ export type ApplyImportInput = {
   acceptedChangeIds: string[]
   /** One entry per conflict on an accepted change, keyed by `conflictKey()`. */
   conflictResolutions: Record<string, ConflictResolution>
+  /**
+   * The chosen interpretation for every accepted `ambiguous-instances` change,
+   * keyed by change id. Required for those changes; nothing else may appear.
+   */
+  ambiguityChoices?: Record<string, string>
 }
 
 export type ApplyResult = {
   appliedChangeIds: string[]
+  ambiguityChoices: Record<string, string>
   keptCurrent: string[]
   beforeSnapshotId: number
   afterSnapshotId: number
@@ -94,10 +100,12 @@ export type ImportServiceDependencies = {
 const APPLY_ORDER: Record<ImportChange['kind'], number> = {
   'set-town-hall': 0,
   'remove-instances': 1,
-  'change-levels': 2,
-  'add-instances': 3,
-  'imported-upgrades': 4,
-  'set-research': 5
+  'ambiguous-instances': 2,
+  'change-levels': 3,
+  'complete-upgrades': 4,
+  'add-instances': 5,
+  'imported-upgrades': 6,
+  'set-research': 7
 }
 
 /** Content hash of everything a plan depends on besides the village state. */
@@ -172,7 +180,7 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
       })
     },
 
-    apply({ importId, acceptedChangeIds, conflictResolutions }) {
+    apply({ importId, acceptedChangeIds, conflictResolutions, ambiguityChoices = {} }) {
       return database.transaction(() => {
         const record = requirePending(importId)
         const state = currentPlanState()
@@ -204,6 +212,44 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
           }
         }
 
+        // Every accepted ambiguous change needs exactly one valid interpretation;
+        // no other choices are allowed.
+        const chosen = new Map<string, Extract<ImportChange, { kind: 'ambiguous-instances' }>['interpretations'][number]>()
+        for (const change of accepted) {
+          if (change.kind !== 'ambiguous-instances') continue
+          if (!(change.id in ambiguityChoices)) {
+            throw new ImportApplyError(`Change "${change.id}" needs a chosen interpretation`)
+          }
+          const interpretation = change.interpretations.find((i) => i.id === ambiguityChoices[change.id])
+          if (!interpretation) {
+            throw new ImportApplyError(`"${String(ambiguityChoices[change.id])}" is not an interpretation of "${change.id}"`)
+          }
+          chosen.set(change.id, interpretation)
+        }
+        for (const key of Object.keys(ambiguityChoices)) {
+          if (!chosen.has(key)) {
+            throw new ImportApplyError(`"${key}" is not an accepted ambiguous change`)
+          }
+        }
+        // A chosen interpretation already decides every instance it touches;
+        // a conflict resolution for one of them would contradict it.
+        for (const interpretation of chosen.values()) {
+          const ops = interpretation.operations
+          const touched = [
+            ...ops.completions.map((o) => o.instanceId),
+            ...ops.levelChanges.map((o) => o.instanceId),
+            ...ops.removals.map((o) => o.instanceId),
+            ...ops.stillUpgrading.map((o) => o.instanceId)
+          ]
+          for (const id of touched) {
+            if (`item-upgrade:${id}` in conflictResolutions) {
+              throw new ImportApplyError(
+                `Conflict "item-upgrade:${id}" contradicts the chosen interpretation, which already decides it`
+              )
+            }
+          }
+        }
+
         // Every conflict on an accepted change needs an explicit decision; nothing else may be resolved.
         const expected = new Set(accepted.flatMap((c) => c.conflicts.map(conflictKey)))
         for (const key of expected) {
@@ -219,6 +265,24 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
         }
         const keepCurrent = (kind: UpgradeConflict['kind'], recordId: number | null): boolean =>
           recordId !== null && conflictResolutions[`${kind}:${recordId}`] === 'keep-current'
+
+        /** Sets an instance to `level` and clears any recorded upgrade. */
+        const settleInstance = (instanceId: number, level: number, provenance: Provenance) => {
+          const instance = database.villageItems.getById(instanceId)
+          if (instance === null) throw new ImportApplyError(`Item instance ${instanceId} is missing`)
+          database.villageItems.update({
+            ...instance,
+            level,
+            targetLevel: null,
+            upgradeStartedAt: null,
+            upgradeEndsAt: null,
+            builderId: null,
+            builderAssignment: null,
+            upgradeObservedTimer: null,
+            upgradeObservedAt: null,
+            ...provenance
+          })
+        }
 
         const before = database.snapshots.capture({
           villageId,
@@ -258,21 +322,39 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
                   keptCurrent.push(`item-upgrade:${target.instanceId}`)
                   continue
                 }
-                const instance = database.villageItems.getById(target.instanceId)!
-                database.villageItems.update({
-                  ...instance,
-                  level: target.toLevel,
-                  targetLevel: null,
-                  upgradeStartedAt: null,
-                  upgradeEndsAt: null,
-                  builderId: null,
-                  builderAssignment: null,
-                  upgradeObservedTimer: null,
-                  upgradeObservedAt: null,
-                  ...provenance
-                })
+                settleInstance(target.instanceId, target.toLevel, provenance)
               }
               break
+            case 'complete-upgrades':
+              for (const target of change.instances) {
+                if (keepCurrent('item-upgrade', target.instanceId)) {
+                  keptCurrent.push(`item-upgrade:${target.instanceId}`)
+                  continue
+                }
+                settleInstance(target.instanceId, target.toLevel, provenance)
+              }
+              break
+            case 'ambiguous-instances': {
+              const ops = chosen.get(change.id)!.operations
+              for (const removal of ops.removals) database.villageItems.delete(removal.instanceId)
+              for (const levelChange of ops.levelChanges) settleInstance(levelChange.instanceId, levelChange.toLevel, provenance)
+              for (const completion of ops.completions) settleInstance(completion.instanceId, completion.toLevel, provenance)
+              for (const addition of ops.additions) {
+                villageState.saveItemInstance(
+                  {
+                    itemId: change.itemId,
+                    instanceNumber: addition.instanceNumber,
+                    level: addition.level,
+                    targetLevel: null,
+                    upgradeStartedAt: null,
+                    upgradeEndsAt: null,
+                    builderId: null
+                  },
+                  provenance
+                )
+              }
+              break
+            }
             case 'add-instances':
               for (const addition of change.instances) {
                 villageState.saveItemInstance(
@@ -369,6 +451,7 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
         })
         const result: ApplyResult = {
           appliedChangeIds: accepted.map((c) => c.id),
+          ambiguityChoices: Object.fromEntries([...chosen].map(([id, i]) => [id, i.id])),
           keptCurrent,
           beforeSnapshotId: before.id,
           afterSnapshotId: after.id

@@ -12,6 +12,7 @@ import type { ResearchState, StateSource, VillageItemInstance } from '../domain/
 import type { TownHallService } from '../services/town-hall-service'
 import type { CatalogueCoverage } from '../services/village-state-service'
 import type { ParsedEntry, ParsedExport, UnknownName } from './export-parser'
+import { matchInstances, type InstanceOperations } from './instance-matching'
 
 /**
  * Turns a parsed export into a reviewable plan of changes. Pure: it reads the
@@ -79,6 +80,21 @@ export type ImportChange =
   | (ChangeBase & {
       kind: 'change-levels'
       instances: Array<{ instanceId: number; instanceNumber: number; fromLevel: number; toLevel: number }>
+    })
+  | (ChangeBase & {
+      /** Upgrades the export shows as finished. Always needs a decision. */
+      kind: 'complete-upgrades'
+      instances: Array<{ instanceId: number; instanceNumber: number; fromLevel: number; toLevel: number }>
+    })
+  | (ChangeBase & {
+      /**
+       * The export fits the recorded instances in more than one way. Applying
+       * it needs an explicit choice of interpretation; nothing is chosen by
+       * default. Empty `interpretations` (with a blockedReason) means the item
+       * must be corrected manually.
+       */
+      kind: 'ambiguous-instances'
+      interpretations: Array<{ id: string; summary: string[]; operations: InstanceOperations }>
     })
   | (ChangeBase & {
       kind: 'remove-instances'
@@ -513,8 +529,29 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
 }
 
 // ---------------------------------------------------------------------------
-// Instance matching (instances have no identity; match by level)
+// Instance matching (instances have no identity; see instance-matching.ts)
 // ---------------------------------------------------------------------------
+
+/** Plain-language lines describing one interpretation. */
+export function describeOperations(itemName: string, ops: InstanceOperations): string[] {
+  return [
+    ...ops.completions.map((c) => `${itemName} #${c.instanceNumber}: upgrade to level ${c.toLevel} finished`),
+    ...ops.stillUpgrading.map(
+      (u) => `${itemName} #${u.instanceNumber}: still upgrading ${u.level} → ${u.targetLevel}`
+    ),
+    ...ops.levelChanges.map(
+      (c) =>
+        `${itemName} #${c.instanceNumber}: level ${c.fromLevel} → ${c.toLevel}` +
+        (c.endsUpgrade ? ' (its recorded upgrade is dropped)' : '')
+    ),
+    ...ops.removals.map(
+      (r) =>
+        `${itemName} #${r.instanceNumber} (level ${r.level}): removed` +
+        (r.endsUpgrade ? ' with its recorded upgrade' : '')
+    ),
+    ...ops.additions.map((a) => `${itemName} #${a.instanceNumber}: added at level ${a.level}`)
+  ]
+}
 
 function planInstances(args: {
   item: CatalogueItem
@@ -540,38 +577,55 @@ function planInstances(args: {
       blockedReason = `${item.name} cannot be above level ${limits.maxLevel} at Town Hall ${effectiveTownHall}`
   }
 
-  // 1. Keep current instances whose level appears in the export.
-  //    Prefer keeping upgrading instances so they are not disturbed.
-  const remainingExported = [...exported].sort((a, b) => a.level - b.level)
-  const order = [...current].sort(
-    (a, b) => Number(b.targetLevel !== null) - Number(a.targetLevel !== null) || a.instanceNumber - b.instanceNumber
+  const result = matchInstances(
+    exported.map((e) => e.level),
+    current
   )
-  const kept: Array<{ instance: VillageItemInstance; exported: ExportedInstance }> = []
-  const unmatched: VillageItemInstance[] = []
-  for (const instance of order) {
-    const index = remainingExported.findIndex((e) => e.level === instance.level)
-    if (index >= 0) {
-      kept.push({ instance, exported: remainingExported[index]! })
-      remainingExported.splice(index, 1)
-    } else {
-      unmatched.push(instance)
-    }
+  const ambiguousId = `instances:${item.id}:ambiguous`
+  if (result.kind === 'too-many') {
+    return [
+      {
+        ...base,
+        id: ambiguousId,
+        kind: 'ambiguous-instances',
+        interpretations: [],
+        requiresIndividualAcceptance: true,
+        conflicts: [],
+        blockedReason: blockedReason ?? result.reason
+      }
+    ]
   }
 
-  // 2. Pair leftovers by ascending level (idle instances first) -> level changes.
-  unmatched.sort(
-    (a, b) => Number(a.targetLevel !== null) - Number(b.targetLevel !== null) || a.level - b.level
-  )
-  const levelPairs: Array<{ instance: VillageItemInstance; exported: ExportedInstance }> = []
-  while (unmatched.length > 0 && remainingExported.length > 0) {
-    levelPairs.push({ instance: unmatched.shift()!, exported: remainingExported.shift()! })
+  const outcomes = result.outcomes
+  if (outcomes.length > 1) {
+    const hasTimers = exported.some((e) => e.upgradeTimer !== null)
+    return [
+      {
+        ...base,
+        id: ambiguousId,
+        kind: 'ambiguous-instances',
+        interpretations: outcomes.map((operations, index) => ({
+          id: `i${index + 1}`,
+          summary: describeOperations(item.name, operations),
+          operations
+        })),
+        requiresIndividualAcceptance: true,
+        conflicts: [],
+        blockedReason:
+          blockedReason ??
+          (hasTimers
+            ? `${item.name} matches the export in several ways and has imported upgrade timers; correct this item manually`
+            : null)
+      }
+    ]
   }
 
-  const changes: ImportChange[] = []
-  const conflictFor = (instance: VillageItemInstance, effect: string): UpgradeConflict[] =>
-    instance.targetLevel === null
-      ? []
-      : [
+  const ops = outcomes[0]!
+  const byId = new Map(current.map((i) => [i.id, i]))
+  const conflictFor = (instanceId: number, effect: string): UpgradeConflict[] => {
+    const instance = byId.get(instanceId)
+    return instance && instance.targetLevel !== null
+      ? [
           {
             kind: 'item-upgrade',
             recordId: instance.id,
@@ -584,20 +638,27 @@ function planInstances(args: {
             exportEffect: effect
           }
         ]
+      : []
+  }
 
-  if (levelPairs.length > 0) {
-    const conflicts = levelPairs.flatMap(({ instance, exported: e }) =>
-      conflictFor(instance, `set level to ${e.level} and end the recorded upgrade`)
+  const changes: ImportChange[] = []
+  const levelsId = `instances:${item.id}:levels`
+  const completeId = `instances:${item.id}:complete`
+  const addId = `instances:${item.id}:add`
+
+  if (ops.levelChanges.length > 0) {
+    const conflicts = ops.levelChanges.flatMap((c) =>
+      conflictFor(c.instanceId, `set level to ${c.toLevel} and end the recorded upgrade`)
     )
     changes.push({
       ...base,
-      id: `instances:${item.id}:levels`,
+      id: levelsId,
       kind: 'change-levels',
-      instances: levelPairs.map(({ instance, exported: e }) => ({
-        instanceId: instance.id,
-        instanceNumber: instance.instanceNumber,
-        fromLevel: instance.level,
-        toLevel: e.level
+      instances: ops.levelChanges.map(({ instanceId, instanceNumber, fromLevel, toLevel }) => ({
+        instanceId,
+        instanceNumber,
+        fromLevel,
+        toLevel
       })),
       requiresIndividualAcceptance: conflicts.length > 0,
       conflicts,
@@ -605,81 +666,119 @@ function planInstances(args: {
     })
   }
 
-  // 3. Extra exported instances -> additions at the next free instance numbers.
-  if (remainingExported.length > 0) {
-    const used = new Set(current.map((i) => i.instanceNumber))
-    let next = 1
-    const additions = remainingExported.map((e) => {
-      while (used.has(next)) next += 1
-      used.add(next)
-      return { instanceNumber: next, level: e.level, upgradeTimer: e.upgradeTimer }
-    })
+  if (ops.completions.length > 0) {
     changes.push({
       ...base,
-      id: `instances:${item.id}:add`,
+      id: completeId,
+      kind: 'complete-upgrades',
+      instances: ops.completions.map(({ instanceId, instanceNumber, fromLevel, toLevel }) => ({
+        instanceId,
+        instanceNumber,
+        fromLevel,
+        toLevel
+      })),
+      requiresIndividualAcceptance: true,
+      conflicts: ops.completions.flatMap((c) =>
+        conflictFor(c.instanceId, `mark the upgrade to level ${c.toLevel} as finished`)
+      ),
+      blockedReason
+    })
+  }
+
+  if (ops.additions.length > 0) {
+    changes.push({
+      ...base,
+      id: addId,
       kind: 'add-instances',
-      instances: additions.map(({ instanceNumber, level }) => ({ instanceNumber, level })),
+      instances: ops.additions.map(({ instanceNumber, level }) => ({ instanceNumber, level })),
       requiresIndividualAcceptance: false,
       conflicts: [],
       blockedReason
     })
-    const addedUpgrades = additions.filter((a) => a.upgradeTimer !== null)
-    if (addedUpgrades.length > 0) {
-      changes.push({
-        ...base,
-        id: `instances:${item.id}:upgrades-new`,
-        kind: 'imported-upgrades',
-        instances: addedUpgrades.map((a) => ({
-          instanceId: null,
-          instanceNumber: a.instanceNumber,
-          level: a.level,
-          observedTimer: a.upgradeTimer!
-        })),
-        requiresIndividualAcceptance: false,
-        conflicts: [],
-        blockedReason,
-        dependsOn: `instances:${item.id}:add`
-      })
-    }
   }
 
-  // 4. Current instances the export does not show -> removals (always individual).
-  if (unmatched.length > 0) {
-    const conflicts = unmatched.flatMap((instance) =>
-      conflictFor(instance, 'remove the instance and its recorded upgrade')
-    )
+  if (ops.removals.length > 0) {
     changes.push({
       ...base,
       id: `instances:${item.id}:remove`,
       kind: 'remove-instances',
-      instances: unmatched.map((i) => ({ instanceId: i.id, instanceNumber: i.instanceNumber, level: i.level })),
+      instances: ops.removals.map(({ instanceId, instanceNumber, level }) => ({ instanceId, instanceNumber, level })),
       requiresIndividualAcceptance: true,
-      conflicts,
+      conflicts: ops.removals.flatMap((r) => conflictFor(r.instanceId, 'remove the instance and its recorded upgrade')),
       blockedReason: coverageBlock
     })
   }
 
-  // 5. Upgrades the export shows on instances that already exist.
-  const existingUpgrades = [...kept, ...levelPairs].filter(({ exported: e }) => e.upgradeTimer !== null)
-  if (existingUpgrades.length > 0) {
-    const conflicts = existingUpgrades.flatMap(({ instance, exported: e }) =>
-      conflictFor(instance, `replace the recorded upgrade with the export's (timer ${e.upgradeTimer}s)`)
-    )
-    changes.push({
-      ...base,
-      id: `instances:${item.id}:upgrades`,
-      kind: 'imported-upgrades',
-      instances: existingUpgrades.map(({ instance, exported: e }) => ({
-        instanceId: instance.id,
-        instanceNumber: instance.instanceNumber,
-        level: e.level,
-        observedTimer: e.upgradeTimer!
-      })),
-      requiresIndividualAcceptance: conflicts.length > 0,
-      conflicts,
-      blockedReason,
-      dependsOn: levelPairs.length > 0 ? `instances:${item.id}:levels` : base.dependsOn
-    })
+  // Imported upgrade timers (verified rule only): give each exported timer at a
+  // level to an instance ending at that level. Idle kept or re-levelled
+  // instances first, then additions, then instances already upgrading
+  // (which needs a decision). Completed instances are never given a timer.
+  const timersByLevel = new Map<number, number[]>()
+  for (const e of exported) {
+    if (e.upgradeTimer !== null) timersByLevel.set(e.level, [...(timersByLevel.get(e.level) ?? []), e.upgradeTimer])
+  }
+  if (timersByLevel.size > 0) {
+    const completedIds = new Set(ops.completions.map((c) => c.instanceId))
+    const changedIds = new Set(ops.levelChanges.map((c) => c.instanceId))
+    const existing: Array<{ instanceId: number; instanceNumber: number; level: number; observedTimer: number; upgrading: boolean }> = []
+    const added: Array<{ instanceId: null; instanceNumber: number; level: number; observedTimer: number }> = []
+    for (const [level, timers] of timersByLevel) {
+      const candidates = ops.finalLevels
+        .filter((f) => f.level === level && !(f.instanceId !== null && completedIds.has(f.instanceId)))
+        .sort(
+          (a, b) =>
+            Number(a.upgrading) - Number(b.upgrading) ||
+            Number(a.instanceId === null) - Number(b.instanceId === null) ||
+            a.instanceNumber - b.instanceNumber
+        )
+      if (candidates.length < timers.length) {
+        return [
+          {
+            ...base,
+            id: ambiguousId,
+            kind: 'ambiguous-instances',
+            interpretations: [],
+            requiresIndividualAcceptance: true,
+            conflicts: [],
+            blockedReason: `${item.name}: imported upgrade timers could not be matched to instances; correct this item manually`
+          }
+        ]
+      }
+      timers.forEach((timer, i) => {
+        const c = candidates[i]!
+        if (c.instanceId === null) added.push({ instanceId: null, instanceNumber: c.instanceNumber, level, observedTimer: timer })
+        else existing.push({ instanceId: c.instanceId, instanceNumber: c.instanceNumber, level, observedTimer: timer, upgrading: c.upgrading })
+      })
+    }
+    if (added.length > 0) {
+      changes.push({
+        ...base,
+        id: `instances:${item.id}:upgrades-new`,
+        kind: 'imported-upgrades',
+        instances: added.sort((a, b) => a.instanceNumber - b.instanceNumber),
+        requiresIndividualAcceptance: false,
+        conflicts: [],
+        blockedReason,
+        dependsOn: addId
+      })
+    }
+    if (existing.length > 0) {
+      const conflicts = existing.flatMap((e) =>
+        conflictFor(e.instanceId, `replace the recorded upgrade with the export's (timer ${e.observedTimer}s)`)
+      )
+      changes.push({
+        ...base,
+        id: `instances:${item.id}:upgrades`,
+        kind: 'imported-upgrades',
+        instances: existing
+          .sort((a, b) => a.instanceNumber - b.instanceNumber)
+          .map(({ instanceId, instanceNumber, level, observedTimer }) => ({ instanceId, instanceNumber, level, observedTimer })),
+        requiresIndividualAcceptance: conflicts.length > 0,
+        conflicts,
+        blockedReason,
+        dependsOn: existing.some((e) => changedIds.has(e.instanceId)) ? levelsId : base.dependsOn
+      })
+    }
   }
 
   return changes
