@@ -83,6 +83,7 @@ describe('IPC handlers', () => {
       imports: createImportService({
         database,
         catalogue: sampleCatalogue,
+        townHallRules: parseTownHallRules(SAMPLE_TOWN_HALL_RULES, sampleCatalogue),
         semantics: loadBundledGameData().exportSemantics,
         townHall,
         villageState
@@ -358,6 +359,10 @@ describe('IPC handlers', () => {
       imports: createImportService({
         database,
         catalogue: empty,
+        townHallRules: parseTownHallRules(
+          { maxTownHall: { 'home-village': null, 'builder-base': null }, items: [] },
+          empty
+        ),
         semantics: loadBundledGameData().exportSemantics,
         townHall: emptyTownHall,
         villageState: emptyVillageState

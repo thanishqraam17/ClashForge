@@ -128,6 +128,7 @@ app.whenReady().then(() => {
       imports: createImportService({
         database: appDatabase,
         catalogue: gameData.catalogue,
+        townHallRules: gameData.townHallRules,
         semantics: gameData.exportSemantics,
         townHall,
         villageState

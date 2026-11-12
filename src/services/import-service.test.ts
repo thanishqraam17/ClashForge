@@ -32,7 +32,8 @@ const VERIFIED_TIMERS: ExportSemantics = parseExportSemantics({
   )
 })
 const catalogue = parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS)
-const townHall = createTownHallService(catalogue, parseTownHallRules(SAMPLE_TOWN_HALL_RULES, catalogue))
+const townHallRules = parseTownHallRules(SAMPLE_TOWN_HALL_RULES, catalogue)
+const townHall = createTownHallService(catalogue, townHallRules)
 const ID = { hall: 900000001, cannon: 900000003, spikeTrap: 900000005, archer: 900000007 }
 const EXPORT_TIME = 1704067200
 
@@ -48,7 +49,7 @@ describe('ImportService', () => {
   function setup(semantics: ExportSemantics = SEMANTICS, withVillage = true) {
     t = createTestDatabase({ withVillage }) // Town Hall 5
     villageState = createVillageStateService({ database: t.database, catalogue, townHall })
-    imports = createImportService({ database: t.database, catalogue, semantics, townHall, villageState })
+    imports = createImportService({ database: t.database, catalogue, townHallRules, semantics, townHall, villageState })
   }
 
   afterEach(() => t.cleanup())
@@ -217,6 +218,56 @@ describe('ImportService', () => {
         level: 2,
         targetLevel: 3,
         source: 'manual'
+      })
+    })
+
+    describe('stale game data or rules', () => {
+      function previewThenApplyWith(overrides: Partial<Parameters<typeof createImportService>[0]>) {
+        const { importId } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }] }))
+        const later = createImportService({
+          database: t.database,
+          catalogue,
+          townHallRules,
+          semantics: SEMANTICS,
+          townHall,
+          villageState,
+          ...overrides
+        })
+        const run = () =>
+          later.apply({ importId, acceptedChangeIds: ['instances:test-cannon:add'], conflictResolutions: {} })
+        return { importId, run }
+      }
+
+      it('rejects apply when the dataset version changed', () => {
+        const { importId, run } = previewThenApplyWith({
+          catalogue: { ...catalogue, manifest: { ...catalogue.manifest, datasetVersion: '9.9.9' } }
+        })
+        expect(run).toThrow(StalePreviewError)
+        expect(run).toThrow(/game data or import rules changed/)
+        expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+        expect(cannons()).toEqual([])
+      })
+
+      it('rejects apply when the export rules version changed', () => {
+        const { importId, run } = previewThenApplyWith({ semantics: { ...SEMANTICS, semanticsVersion: '9.9.9' } })
+        expect(run).toThrow(StalePreviewError)
+        expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+      })
+
+      it('rejects apply when the data changed without a version bump', () => {
+        const editedRules = {
+          ...townHallRules,
+          items: townHallRules.items.map((r) =>
+            r.itemId === 'test-cannon' ? { ...r, steps: r.steps.map((s) => ({ ...s, maxLevel: s.maxLevel + 1 })) } : r
+          )
+        }
+        const { run } = previewThenApplyWith({ townHallRules: editedRules })
+        expect(run).toThrow(StalePreviewError)
+      })
+
+      it('still applies when nothing changed', () => {
+        const { run } = previewThenApplyWith({})
+        expect(run).not.toThrow()
       })
     })
 

@@ -1,7 +1,9 @@
+import { createHash } from 'crypto'
 import type { ClashForgeDatabase } from '../database/client/database'
 import type { ExportImport, ExportObservation } from '../database/repositories/import-repository'
 import type { GameCatalogue } from '../domain/catalogue'
 import type { ExportSemantics } from '../domain/export-semantics'
+import type { TownHallRuleSet } from '../domain/town-hall-rules'
 import { LOCAL_VILLAGE_ID } from '../domain/village'
 import type { Provenance } from '../domain/village-state'
 import { parseExport, type ExportParseIssue } from '../import/export-parser'
@@ -24,8 +26,8 @@ export class ImportInvalidError extends Error {
 }
 
 export class StalePreviewError extends Error {
-  constructor() {
-    super('The village changed after this preview was made. Preview the export again.')
+  constructor(message = 'The village changed after this preview was made. Preview the export again.') {
+    super(message)
     this.name = 'StalePreviewError'
   }
 }
@@ -38,7 +40,14 @@ export class ImportApplyError extends Error {
 }
 
 /** What a preview stores and returns: the plan without the per-entry observations. */
-export type ImportPlanSummary = Omit<ImportPlan, 'observations'> & { observationCount: number }
+export type ImportPlanSummary = Omit<ImportPlan, 'observations'> & {
+  observationCount: number
+  /**
+   * Hash of the catalogue, Town Hall rules and export semantics the plan was
+   * built from. Catches data edits made without a version bump.
+   */
+  gameDataHash: string
+}
 
 export type ImportPreview = {
   importId: number
@@ -74,6 +83,7 @@ export type ImportService = {
 export type ImportServiceDependencies = {
   database: ClashForgeDatabase
   catalogue: GameCatalogue
+  townHallRules: TownHallRuleSet
   semantics: ExportSemantics
   townHall: TownHallService
   villageState: VillageStateService
@@ -89,9 +99,21 @@ const APPLY_ORDER: Record<ImportChange['kind'], number> = {
   'set-research': 5
 }
 
+/** Content hash of everything a plan depends on besides the village state. */
+export function hashGameData(
+  catalogue: GameCatalogue,
+  townHallRules: TownHallRuleSet,
+  semantics: ExportSemantics
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify({ catalogue, townHallRules, semantics }))
+    .digest('hex')
+}
+
 export function createImportService(deps: ImportServiceDependencies): ImportService {
-  const { database, catalogue, semantics, townHall, villageState } = deps
+  const { database, catalogue, townHallRules, semantics, townHall, villageState } = deps
   const villageId = LOCAL_VILLAGE_ID
+  const gameDataHash = hashGameData(catalogue, townHallRules, semantics)
 
   function currentPlanState() {
     const state = villageState.getState()
@@ -130,7 +152,11 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
           state
         })
         const { observations, ...rest } = plan
-        const summary: ImportPlanSummary = { ...rest, observationCount: observations.length }
+        const summary: ImportPlanSummary = {
+          ...rest,
+          observationCount: observations.length,
+          gameDataHash
+        }
         const record = database.imports.create({
           villageId,
           exportTimestamp: parsed.export.exportTimestamp,
@@ -151,7 +177,18 @@ export function createImportService(deps: ImportServiceDependencies): ImportServ
         const state = currentPlanState()
         if (fingerprintState(state) !== record.stateFingerprint) throw new StalePreviewError()
 
+        // The preview must have been built from the same game data and export rules.
         const plan = record.summary as ImportPlanSummary
+        if (
+          record.dataVersion !== catalogue.manifest.datasetVersion ||
+          record.semanticsVersion !== semantics.semanticsVersion ||
+          plan.gameDataHash !== gameDataHash
+        ) {
+          throw new StalePreviewError(
+            'The game data or import rules changed after this preview was made. Preview the export again.'
+          )
+        }
+
         const byId = new Map(plan.changes.map((c) => [c.id, c]))
         const accepted = [...new Set(acceptedChangeIds)].map((id) => {
           const change = byId.get(id)
