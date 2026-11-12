@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from 'react-router-dom'
+import { FanContentNotice } from '@/components/legal/FanContentNotice'
 import { cn } from '@/lib/utils'
 import {
   History,
@@ -60,6 +61,7 @@ export function AppShell(): React.JSX.Element {
           <p className="mt-2 text-[11px] leading-snug text-muted">
             Your village data is stored locally on this device.
           </p>
+          <FanContentNotice className="mt-3 text-[11px] leading-snug text-muted" />
         </div>
       </aside>
 
