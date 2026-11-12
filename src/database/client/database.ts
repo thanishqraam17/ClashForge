@@ -11,6 +11,7 @@ import {
 } from '../repositories/village-item-repository'
 import { createVillageRepository, type VillageRepository } from '../repositories/village-repository'
 import { runMigrations } from '../schema/migrate'
+import { createEditLogRepository, type EditLogRepository } from '../repositories/edit-log-repository'
 import { createImportRepository, type ImportRepository } from '../repositories/import-repository'
 import {
   createLegacyRecordRepository,
@@ -36,6 +37,7 @@ export type ClashForgeDatabase = {
   readonly snapshots: SnapshotRepository
   readonly legacyRecords: LegacyRecordRepository
   readonly imports: ImportRepository
+  readonly editLog: EditLogRepository
   /** Runs `fn` in a single transaction; any throw rolls everything back. */
   transaction: <T>(fn: () => T) => T
   readonly upgradeHistory: UpgradeHistoryRepository
@@ -60,6 +62,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
   const researchStates = createResearchStateRepository(db)
   const legacyRecords = createLegacyRecordRepository(db)
   const imports = createImportRepository(db)
+  const editLog = createEditLogRepository(db)
   const snapshots = createSnapshotRepository(db, {
     villages,
     villageItems,
@@ -77,6 +80,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
     snapshots,
     legacyRecords,
     imports,
+    editLog,
     transaction<T>(fn: () => T): T {
       return db.transaction(fn)()
     },

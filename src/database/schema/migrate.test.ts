@@ -337,7 +337,7 @@ describe('migrations', () => {
 
     it('keeps every item and derives builder assignments', () => {
       seedVersion3()
-      runMigrations(db)
+      runMigrations(db, { upTo: 4 })
       expect(readAppliedVersion(db)).toBe(4)
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
       expect(
@@ -477,4 +477,100 @@ describe('migrations', () => {
       })
     })
   })
+  describe('v4 -> v5', () => {
+    const now = T0
+
+    it('adds the edit log without touching existing data', () => {
+      runMigrations(db, { upTo: 4 })
+      db.prepare(
+        `INSERT INTO villages (id, town_hall_level, gold, created_at, updated_at) VALUES (1, 9, 555, ?, ?)`
+      ).run(now, now)
+      db.prepare(
+        `INSERT INTO builders (id, village_id, slot, source, confidence, created_at, updated_at)
+         VALUES (1, 1, 1, 'manual', 1, ?, ?)`
+      ).run(now, now)
+      db.prepare(
+        `INSERT INTO village_items (village_id, item_id, instance_number, level, target_level, builder_id,
+           builder_assignment, source, confidence, confirmed_at, created_at, updated_at)
+         VALUES (1, 'cannon', 1, 3, 4, 1, 'confirmed', 'manual', 1, ?, ?, ?)`
+      ).run(now, now, now)
+      db.prepare(
+        `INSERT INTO village_snapshots (village_id, captured_at, source, data_version, schema_version, payload, created_at)
+         VALUES (1, ?, 'manual', '0.1.1', 2, '{"items":[]}', ?)`
+      ).run(now, now)
+      const before = {
+        villages: db.prepare('SELECT * FROM villages').all(),
+        items: db.prepare('SELECT * FROM village_items').all(),
+        builders: db.prepare('SELECT * FROM builders').all(),
+        snapshots: db.prepare('SELECT * FROM village_snapshots').all()
+      }
+
+      runMigrations(db)
+      expect(readAppliedVersion(db)).toBe(5)
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect({
+        villages: db.prepare('SELECT * FROM villages').all(),
+        items: db.prepare('SELECT * FROM village_items').all(),
+        builders: db.prepare('SELECT * FROM builders').all(),
+        snapshots: db.prepare('SELECT * FROM village_snapshots').all()
+      }).toEqual(before)
+      expect(db.prepare('SELECT COUNT(*) AS n FROM edit_log').get()).toEqual({ n: 0 })
+    })
+
+    describe('edit_log constraints', () => {
+      beforeEach(() => {
+        runMigrations(db)
+        db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`).run(now, now)
+      })
+
+      function insert(values: Record<string, unknown>) {
+        const row = {
+          entityType: 'item-instance',
+          entityId: 1,
+          action: 'update',
+          before: '{"level":3}',
+          after: '{"level":4}',
+          batchId: null,
+          note: null,
+          ...values
+        }
+        return db
+          .prepare(
+            `INSERT INTO edit_log (village_id, entity_type, entity_id, item_id, action, before_state, after_state,
+               batch_id, note, created_at)
+             VALUES (1, @entityType, @entityId, 'cannon', @action, @before, @after, @batchId, @note, @now)`
+          )
+          .run({ ...row, now })
+      }
+
+      it('accepts valid rows and rejects invalid ones', () => {
+        expect(() => insert({})).not.toThrow()
+        expect(() => insert({ action: 'create', before: null })).not.toThrow()
+        expect(() => insert({ action: 'delete', after: null })).not.toThrow()
+        for (const bad of [
+          { entityType: 'wall' },
+          { action: 'rename' },
+          { action: 'create' },
+          { action: 'delete' },
+          { before: null, after: null },
+          { before: 'not json' },
+          { entityId: 0 },
+          { batchId: '' },
+          { note: '' },
+          { note: 'x'.repeat(501) }
+        ]) {
+          expect(() => insert(bad), JSON.stringify(bad)).toThrow(/CHECK/)
+        }
+      })
+
+      it('blocks updates but lets the village cascade', () => {
+        insert({})
+        expect(() => db.prepare(`UPDATE edit_log SET note = 'x'`).run()).toThrow(/edit log entries are immutable/)
+        db.prepare('DELETE FROM villages WHERE id = 1').run()
+        expect(db.prepare('SELECT COUNT(*) AS n FROM edit_log').get()).toEqual({ n: 0 })
+      })
+    })
+  })
+
 })
