@@ -5,3 +5,6 @@ out
 *.log
 .DS_Store
 Thumbs.db
+
+# Raw game exports contain private player data; never commit them
+samples/private/
