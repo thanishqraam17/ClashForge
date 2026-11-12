@@ -105,3 +105,41 @@ describe('TownHallService.getSummary', () => {
     expect(service.getMaxTownHall('builder-base')).toBe(3)
   })
 })
+
+describe('TownHallService.compare', () => {
+  it('splits items into unlocked, improved, unchanged and still locked', () => {
+    expect(service.compare(4, 6)).toEqual({
+      gameMode: 'home-village',
+      fromTownHall: 4,
+      toTownHall: 6,
+      newlyUnlocked: [{ itemId: 'test-heal-spell', maxLevel: 2, maxQuantity: 1 }],
+      improved: [
+        { itemId: 'test-hall', fromMaxLevel: 4, toMaxLevel: 6, fromMaxQuantity: 1, toMaxQuantity: 1 },
+        { itemId: 'test-cannon', fromMaxLevel: 4, toMaxLevel: 6, fromMaxQuantity: 2, toMaxQuantity: 3 },
+        { itemId: 'test-mortar', fromMaxLevel: 1, toMaxLevel: 3, fromMaxQuantity: 1, toMaxQuantity: 2 },
+        { itemId: 'test-archer', fromMaxLevel: 2, toMaxLevel: 3, fromMaxQuantity: 1, toMaxQuantity: 1 }
+      ],
+      unchanged: ['test-gold-mine', 'test-spike-trap', 'test-decoration'],
+      stillLocked: [{ itemId: 'test-knight', unlocksAtTownHall: 7 }]
+    })
+  })
+
+  it('treats comparing a Town Hall with itself as all unchanged', () => {
+    const same = service.compare(3, 3)
+    expect(same.newlyUnlocked).toEqual([])
+    expect(same.improved).toEqual([])
+    expect(same.unchanged).toEqual([
+      'test-hall',
+      'test-gold-mine',
+      'test-cannon',
+      'test-mortar',
+      'test-archer',
+      'test-decoration'
+    ])
+  })
+
+  it('rejects reversed or out-of-range comparisons', () => {
+    expect(() => service.compare(5, 4)).toThrow(TownHallRangeError)
+    expect(() => service.compare(1, 9)).toThrow(TownHallRangeError)
+  })
+})

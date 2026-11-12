@@ -36,12 +36,34 @@ export type TownHallSummary = {
   locked: Array<{ itemId: ItemId; unlocksAtTownHall: number }>
 }
 
+export type TownHallComparison = {
+  gameMode: GameMode
+  fromTownHall: number
+  toTownHall: number
+  /** Locked at `from`, available at `to`. */
+  newlyUnlocked: Array<{ itemId: ItemId; maxLevel: number; maxQuantity: number }>
+  /** Available at both, with a higher max level and/or quantity at `to`. */
+  improved: Array<{
+    itemId: ItemId
+    fromMaxLevel: number
+    toMaxLevel: number
+    fromMaxQuantity: number
+    toMaxQuantity: number
+  }>
+  /** Available at both with identical limits. */
+  unchanged: ItemId[]
+  /** Still locked at `to`. */
+  stillLocked: Array<{ itemId: ItemId; unlocksAtTownHall: number }>
+}
+
 export type TownHallService = {
   /** Highest Town Hall level with data, or null when not yet known. */
   getMaxTownHall: (gameMode: GameMode) => number | null
   /** Null when the item is not in the catalogue. */
   getItemAt: (itemId: ItemId, townHall: number) => ItemAtTownHall | null
   getSummary: (townHall: number, gameMode?: GameMode) => TownHallSummary
+  /** Differences between two Town Hall levels; `from` must not exceed `to`. */
+  compare: (fromTownHall: number, toTownHall: number, gameMode?: GameMode) => TownHallComparison
 }
 
 /** The step in force at `townHall`, or null before the item unlocks. */
@@ -132,6 +154,58 @@ export function createTownHallService(
         })
       }
       return summary
+    },
+
+    compare(fromTownHall, toTownHall, gameMode = 'home-village') {
+      assertTownHall(fromTownHall, gameMode)
+      assertTownHall(toTownHall, gameMode)
+      if (fromTownHall > toTownHall) {
+        throw new TownHallRangeError('fromTownHall cannot be higher than toTownHall')
+      }
+      const comparison: TownHallComparison = {
+        gameMode,
+        fromTownHall,
+        toTownHall,
+        newlyUnlocked: [],
+        improved: [],
+        unchanged: [],
+        stillLocked: []
+      }
+
+      for (const item of catalogue.items) {
+        if (item.gameMode !== gameMode) continue
+        const entry = rulesById.get(item.id)
+        if (!entry) continue
+        const before = stepAt(entry.steps, fromTownHall)
+        const after = stepAt(entry.steps, toTownHall)
+
+        if (after === null) {
+          comparison.stillLocked.push({
+            itemId: item.id,
+            unlocksAtTownHall: entry.steps[0]!.townHall
+          })
+        } else if (before === null) {
+          comparison.newlyUnlocked.push({
+            itemId: item.id,
+            maxLevel: after.maxLevel,
+            maxQuantity: after.maxQuantity
+          })
+        } else if (
+          after.maxLevel !== before.maxLevel ||
+          after.maxQuantity !== before.maxQuantity
+        ) {
+          comparison.improved.push({
+            itemId: item.id,
+            fromMaxLevel: before.maxLevel,
+            toMaxLevel: after.maxLevel,
+            fromMaxQuantity: before.maxQuantity,
+            toMaxQuantity: after.maxQuantity
+          })
+        } else {
+          comparison.unchanged.push(item.id)
+        }
+      }
+      return comparison
     }
   }
 }
