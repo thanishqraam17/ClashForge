@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { loadBundledGameData } from './index'
 
 describe('bundled game data', () => {
-  it('passes catalogue and town hall rule validation', () => {
+  it('passes catalogue, town hall rule and asset validation', () => {
     expect(() => loadBundledGameData()).not.toThrow()
   })
 

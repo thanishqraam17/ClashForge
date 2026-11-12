@@ -1,7 +1,9 @@
+import { parseAssetManifest, type AssetManifest } from '../domain/assets'
 import { parseGameCatalogue } from '../domain/catalogue-validation'
 import type { GameCatalogue } from '../domain/catalogue'
 import type { TownHallRuleSet } from '../domain/town-hall-rules'
 import { parseTownHallRules } from '../domain/town-hall-rules-validation'
+import rawAssets from './assets.json'
 import rawItems from './items.json'
 import rawManifest from './manifest.json'
 import rawTownHallRules from './town-hall-rules.json'
@@ -9,6 +11,7 @@ import rawTownHallRules from './town-hall-rules.json'
 export type BundledGameData = {
   catalogue: GameCatalogue
   townHallRules: TownHallRuleSet
+  assets: AssetManifest
 }
 
 /**
@@ -19,5 +22,6 @@ export type BundledGameData = {
 export function loadBundledGameData(): BundledGameData {
   const catalogue = parseGameCatalogue(rawManifest, rawItems)
   const townHallRules = parseTownHallRules(rawTownHallRules, catalogue)
-  return { catalogue, townHallRules }
+  const assets = parseAssetManifest(rawAssets, catalogue, townHallRules)
+  return { catalogue, townHallRules, assets }
 }
