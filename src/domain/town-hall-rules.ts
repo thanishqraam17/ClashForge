@@ -33,8 +33,11 @@ export type ItemTownHallRules = {
 }
 
 export type TownHallRuleSet = {
-  /** Highest Town Hall level covered by the rules, per game mode. */
-  maxTownHall: Record<GameMode, number>
+  /**
+   * Highest Town Hall level covered by the rules, per game mode. `null` means
+   * not yet known; it is only allowed while that game mode has no items.
+   */
+  maxTownHall: Record<GameMode, number | null>
   items: ItemTownHallRules[]
 }
 

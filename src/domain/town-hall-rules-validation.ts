@@ -63,13 +63,20 @@ export function validateTownHallRules(
     if (key !== 'maxTownHall' && key !== 'items') add(`rules.${key}`, 'is not a recognised field')
   }
 
-  const maxTownHall = { 'home-village': 1, 'builder-base': 1 } as Record<GameMode, number>
+  const maxTownHall = { 'home-village': null, 'builder-base': null } as Record<
+    GameMode,
+    number | null
+  >
   if (!isObject(raw['maxTownHall'])) {
     add('rules.maxTownHall', 'must be an object')
   } else {
     for (const mode of GAME_MODES) {
       const value = raw['maxTownHall'][mode]
-      if (!isIntInRange(value, 1, ABSOLUTE_MAX_TOWN_HALL)) {
+      if (value === null) {
+        if (catalogue.items.some((item) => item.gameMode === mode)) {
+          add(`rules.maxTownHall.${mode}`, 'cannot be null while the catalogue has items in this mode')
+        }
+      } else if (!isIntInRange(value, 1, ABSOLUTE_MAX_TOWN_HALL)) {
         add(`rules.maxTownHall.${mode}`, `must be an integer between 1 and ${ABSOLUTE_MAX_TOWN_HALL}`)
       } else {
         maxTownHall[mode] = value
@@ -109,7 +116,7 @@ export function validateTownHallRules(
       return
     }
     seen.add(item.id)
-    const modeMax = maxTownHall[item.gameMode]
+    const modeMax = maxTownHall[item.gameMode] ?? ABSOLUTE_MAX_TOWN_HALL
 
     const steps: TownHallStep[] = []
     if (!Array.isArray(entry['steps']) || entry['steps'].length === 0) {

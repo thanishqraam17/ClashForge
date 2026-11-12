@@ -41,6 +41,20 @@ describe('validateTownHallRules', () => {
     )
   })
 
+  it('allows an unknown (null) max Town Hall only for modes without items', () => {
+    const raw = rules()
+    raw.maxTownHall['builder-base'] = null
+    expect(issues(raw)).toEqual([
+      'rules.maxTownHall.builder-base: cannot be null while the catalogue has items in this mode'
+    ])
+    const emptyCatalogue = parseGameCatalogue(SAMPLE_MANIFEST, [])
+    const result = validateTownHallRules(
+      { maxTownHall: { 'home-village': null, 'builder-base': null }, items: [] },
+      emptyCatalogue
+    )
+    expect(result.ok).toBe(true)
+  })
+
   it('requires rules for every catalogue item and only known items', () => {
     const missing = rules()
     missing.items = missing.items.filter((entry) => entry['itemId'] !== 'test-mortar')
