@@ -85,3 +85,32 @@ The `ItemImage` component shows:
 - a neutral placeholder when there is no image.
 
 The unofficial-content notice required by Supercell's Fan Content Policy is always visible in the sidebar and on the Settings page, which also lists every artwork source.
+
+## Village state
+
+Schema version 3 (`src/database/migrations/003_village_state.sql`) stores the player's village. Business rules live in `src/services/village-state-service.ts`; repositories only persist.
+
+| Table | Holds |
+|---|---|
+| `villages` | Town Hall level and resources (single local village) |
+| `builders` | One row per builder slot; a builder is busy when an item instance points at it |
+| `village_items` | One row per owned instance (buildings, defenses, traps, walls, heroes), keyed by catalogue `item_id` and `instance_number` |
+| `research` | Laboratory level per troop, spell or siege machine; at most one active research |
+| `village_snapshots` | Immutable JSON snapshots of the whole state, newest = last confirmed baseline |
+| `legacy_*` | Pre-version-3 records, archived unchanged with a reconciliation status |
+
+**Provenance.** Village, builder, item and research rows carry `source` (`manual`, `data-export`, `screenshot`, `live-capture`, `timer-estimate`), `confidence` (0–1) and `confirmed_at`. A null `confirmed_at` means the value is unconfirmed or estimated and must be shown that way.
+
+**Upgrades.** An instance is upgrading when `target_level` is set. It must be exactly `level + 1` and assigned to a builder from the same village, and each builder can work on one upgrade. The database enforces these rules as well as the service.
+
+**Catalogue coverage.** Items and research must reference real catalogue IDs and respect the village's Town Hall limits. While the bundled catalogue has no items, or the village's Town Hall is newer than the data, `villageState.getCoverage()` reports `canRecordItems: false` with a reason, and item/research saves return `CATALOGUE_INCOMPLETE`. The village row, builders and snapshots keep working. No catalogue entries are invented.
+
+**Snapshots** are append-only. A database trigger rejects updates, and each read returns a fresh copy, so a snapshot always shows the state at its capture time.
+
+**Legacy records.** Migration 3 archived the old free-text buildings, heroes and research instead of deleting them, and turned the old builder count into builder rows (the original counts are kept in `legacy_village_builder_counts`). On startup, `reconcileLegacyRecords` converts a record only when:
+
+- its name matches exactly one Home Village catalogue item of the right kind;
+- it was not mid-upgrade;
+- the result passes normal validation.
+
+A multi-building record converts completely or not at all. Converted values are marked unconfirmed. Every other record stays `pending` with a note, available through `legacy.list()` for manual reconciliation. Nothing is discarded.
