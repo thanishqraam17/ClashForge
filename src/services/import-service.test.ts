@@ -267,6 +267,19 @@ describe('ImportService', () => {
         expect(cannons().map((c) => [c.level, c.targetLevel])).toEqual([[3, 4], [3, null]])
       })
 
+      it('can apply "the upgrading instance is gone" and frees its builder (audit N1)', () => {
+        addCannons([3, 3], 0) // #1 upgrading 3 -> 4, #2 idle at 3
+        const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }] }))
+        const change = plan.changes.find((c) => c.id === AMBIGUOUS) as Extract<(typeof plan.changes)[number], { kind: 'ambiguous-instances' }>
+        expect(change.interpretations.map((i) => i.summary)).toEqual([
+          ['Test Cannon #1: still upgrading 3 → 4', 'Test Cannon #2 (level 3): removed'],
+          ['Test Cannon #1 (level 3): removed with its recorded upgrade']
+        ])
+        imports.apply({ importId, acceptedChangeIds: [AMBIGUOUS], conflictResolutions: {}, ambiguityChoices: { [AMBIGUOUS]: 'i2' } })
+        expect(cannons().map((c) => [c.instanceNumber, c.level, c.targetLevel])).toEqual([[2, 3, null]])
+        expect(villageState.getState()!.builders.every((b) => b.status === 'free')).toBe(true)
+      })
+
       it('surfaces same-level instances with different provenance (F2)', () => {
         villageState.saveItemInstance({ itemId: 'test-cannon', instanceNumber: 1, level: 3, targetLevel: null, upgradeStartedAt: null, upgradeEndsAt: null, builderId: null })
         villageState.saveItemInstance(

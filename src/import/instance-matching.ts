@@ -10,9 +10,9 @@ import type { VillageItemInstance } from '../domain/village-state'
  *   included). Every interpretation uses exactly that multiset.
  * - Each upgrading instance (L -> T) is either still upgrading (uses one
  *   exported L), completed (uses one exported T), or released (its upgrade
- *   ended; it is re-levelled or removed like an idle instance). Combinations
- *   that release fewer upgrades are preferred: only the smallest number of
- *   releases that fits the counts is considered.
+ *   ended; it is re-levelled or removed like an idle instance). The smallest
+ *   number of releases that fits the counts is always considered; larger
+ *   numbers only where every released upgrade is removed.
  * - Idle instances keep their level where the export allows, and the rest are
  *   paired with the remaining exported levels in ascending order. Where idle
  *   instances of one level belong to materially different provenance groups
@@ -86,9 +86,15 @@ export function matchInstances(
     return true
   }
 
-  // Upgrade fate combinations, fewest releases first; stop at the first release count that fits.
+  // Upgrade fate combinations, fewest releases first. Up to the smallest
+  // release count that fits, a released upgrade may take any fate (fallback).
+  // Beyond it, a combination is kept only if every released upgrade is
+  // removed: when the export shows fewer instances than recorded, "the
+  // upgrading one is gone" fits the counts as well as "an idle one is gone".
   const combos = upgradeCombos(upgrading.length)
-  for (let releases = 0; releases <= upgrading.length && outcomes.length === 0 && !overflow; releases += 1) {
+  let minimalReleases = -1
+  for (let releases = 0; releases <= upgrading.length && !overflow; releases += 1) {
+    const releasedMustBeRemoved = minimalReleases >= 0
     for (const combo of combos) {
       if (combo.filter((f) => f === 'release').length !== releases) continue
       const remaining = new Map(exported)
@@ -101,8 +107,13 @@ export function matchInstances(
         remaining.set(use, left)
       })
       if (!feasible) continue
-      if (!expandIdle(upgrading, combo, idle, remaining, usedNumbers, record, () => (overflow = true))) break
+      if (
+        !expandIdle(upgrading, combo, idle, remaining, usedNumbers, record, () => (overflow = true), releasedMustBeRemoved)
+      ) {
+        break
+      }
     }
+    if (minimalReleases < 0 && outcomes.length > 0) minimalReleases = releases
   }
 
   if (overflow) {
@@ -136,7 +147,8 @@ function expandIdle(
   remaining: Map<number, number>,
   usedNumbers: Set<number>,
   record: (ops: InstanceOperations) => boolean,
-  markOverflow: () => void
+  markOverflow: () => void,
+  releasedMustBeRemoved: boolean
 ): boolean {
   const left = new Map(remaining)
   const idleByLevel = new Map<number, VillageItemInstance[]>()
@@ -169,6 +181,9 @@ function expandIdle(
     else fatesByLevel.get(slot.level)!.push(fate)
   })
   const additionLevels = remainingLevels.slice(freedSlots.length)
+  if (releasedMustBeRemoved && [...releasedFates.values()].some((fate) => fate.kind !== 'remove')) {
+    return true // not a plausible alternative; keep searching
+  }
 
   // Distribute each level's fates over its instances, per provenance group.
   const levels = [...fatesByLevel.keys()].sort((a, b) => a - b)

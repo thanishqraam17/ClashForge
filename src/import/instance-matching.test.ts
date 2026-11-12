@@ -94,6 +94,85 @@ describe('matchInstances: completed-upgrade ambiguity (F1)', () => {
   })
 })
 
+describe('matchInstances: removed upgrading instances (audit N1)', () => {
+  it('offers "the upgrading one is gone" when the export has fewer instances: export {3}', () => {
+    expect(outcomes([3], [inst(1, 3, { target: 4 }), inst(2, 3)]).map(describe_)).toEqual([
+      ['#1 still 3->4', '#2 removed'],
+      ['#1 removed (upgrade ended)']
+    ])
+  })
+
+  it('offers it alongside a completion: export {4}', () => {
+    expect(outcomes([4], [inst(1, 3, { target: 4 }), inst(2, 3)]).map(describe_)).toEqual([
+      ['#1 completed 4', '#2 removed'],
+      ['#2 3->4', '#1 removed (upgrade ended)']
+    ])
+  })
+
+  it('offers it regardless of provenance', () => {
+    const result = outcomes([3], [inst(1, 3, { target: 4 }), inst(2, 3, { source: 'timer-estimate', confidence: 0.3, confirmed: false })])
+    expect(result).toHaveLength(2)
+  })
+
+  it('does not invent releases when nothing has to be removed', () => {
+    expect(outcomes([3, 3], [inst(1, 3, { target: 4 }), inst(2, 3)]).map(describe_)).toEqual([['#1 still 3->4']])
+    expect(outcomes([3, 4], [inst(1, 3, { target: 4 }), inst(2, 3)])).toHaveLength(2) // unchanged F1 case
+  })
+})
+
+describe('matchInstances: invariants (seeded random cases)', () => {
+  it('every interpretation uses the exact exported multiset and gives every instance one fate', () => {
+    let seed = 12345
+    const rnd = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed % n
+    }
+    let ambiguous = 0
+    for (let c = 0; c < 3000; c += 1) {
+      nextId = 1
+      const current: VillageItemInstance[] = []
+      for (let i = 1, n = rnd(5); i <= n; i += 1) {
+        const level = 1 + rnd(4)
+        const group = rnd(3)
+        current.push(
+          inst(i, level, {
+            target: rnd(3) === 0 ? level + 1 : undefined,
+            source: group === 2 ? 'timer-estimate' : 'manual',
+            confirmed: group !== 1,
+            confidence: group === 2 ? 0.3 : 1
+          })
+        )
+      }
+      const exported = Array.from({ length: rnd(6) }, () => 1 + rnd(5))
+      const first = matchInstances(exported, current)
+      expect(JSON.stringify(matchInstances(exported, current))).toBe(JSON.stringify(first))
+      if (first.kind !== 'outcomes') continue
+      expect(first.outcomes.length).toBeGreaterThan(0)
+      if (first.outcomes.length > 1) ambiguous += 1
+      for (const ops of first.outcomes) {
+        expect(ops.finalLevels.map((f) => f.level).sort()).toEqual([...exported].sort())
+        const decided = new Set([
+          ...ops.stillUpgrading.map((x) => x.instanceId),
+          ...ops.completions.map((x) => x.instanceId),
+          ...ops.levelChanges.map((x) => x.instanceId),
+          ...ops.removals.map((x) => x.instanceId),
+          ...ops.finalLevels.filter((f) => f.instanceId !== null).map((f) => f.instanceId!)
+        ])
+        expect([...decided].sort((a, b) => a - b)).toEqual(current.map((i) => i.id).sort((a, b) => a - b))
+        const removedOrKept = ops.removals.length + ops.finalLevels.filter((f) => f.instanceId !== null).length
+        expect(removedOrKept).toBe(current.length)
+        for (const done of ops.completions) {
+          expect(current.find((i) => i.id === done.instanceId)!.targetLevel).toBe(done.toLevel)
+        }
+        const numbers = ops.additions.map((a) => a.instanceNumber)
+        expect(new Set(numbers).size).toBe(numbers.length)
+        for (const n of numbers) expect(current.some((i) => i.instanceNumber === n)).toBe(false)
+      }
+    }
+    expect(ambiguous).toBeGreaterThan(50)
+  })
+})
+
 describe('matchInstances: same-level provenance (F2)', () => {
   it('treats the choice between materially different instances as ambiguous', () => {
     const result = outcomes([3, 5], [inst(1, 3), inst(2, 3, { source: 'timer-estimate', confidence: 0.3, confirmed: false })])
