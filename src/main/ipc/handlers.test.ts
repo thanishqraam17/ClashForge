@@ -84,6 +84,8 @@ describe('IPC handlers', () => {
     const saved = expectOk(handlers['village:save'](villageInput))
     expect(saved).toMatchObject({ id: 1, townHallLevel: 9, gold: 1_000 })
     expect(saved.lastScannedAt).toBe('2026-09-14T10:30:00.000Z')
+    expect(saved).toMatchObject({ source: 'manual', confidence: 1 })
+    expect(typeof saved.confirmedAt).toBe('string')
     expect(typeof saved.createdAt).toBe('string')
 
     const updated = expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 10 }))

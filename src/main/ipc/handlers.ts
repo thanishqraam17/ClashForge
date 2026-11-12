@@ -5,6 +5,7 @@ import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
 import { UpgradeHistoryValidationError } from '../../domain/upgrade-history'
 import { LOCAL_VILLAGE_ID, VillageValidationError } from '../../domain/village'
+import { manualProvenance } from '../../domain/village-state'
 import {
   HISTORY_RECENT_DEFAULT_LIMIT,
   type IpcChannel,
@@ -130,7 +131,8 @@ export function createIpcHandlers({
       const input = parseVillageSaveInput(payload)
       const village = database.villages.upsertVillage({
         ...input,
-        lastScannedAt: toDateOrNull(input.lastScannedAt)
+        lastScannedAt: toDateOrNull(input.lastScannedAt),
+        ...manualProvenance()
       })
       return toVillageDto(village)
     }),

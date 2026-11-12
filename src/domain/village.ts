@@ -1,7 +1,9 @@
+import { validateProvenance, type Provenance } from './village-state'
+
 /** Stable identifier for the single local ClashForge village. */
 export const LOCAL_VILLAGE_ID = 1
 
-export type Village = {
+export type Village = Provenance & {
   id: number
   townHallLevel: number
   gold: number
@@ -15,7 +17,7 @@ export type Village = {
   updatedAt: Date
 }
 
-export type VillagePersistInput = {
+export type VillagePersistInput = Provenance & {
   townHallLevel: number
   gold: number
   elixir: number
@@ -55,4 +57,5 @@ export function validateVillagePersistInput(input: VillagePersistInput): void {
   if (input.darkElixirCapacity < 0) {
     throw new VillageValidationError('darkElixirCapacity cannot be negative')
   }
+  validateProvenance(input)
 }

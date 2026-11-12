@@ -16,7 +16,10 @@ function seedVillage(dbPath: string) {
     goldCapacity: 0,
     elixirCapacity: 0,
     darkElixirCapacity: 0,
-    lastScannedAt: null
+    lastScannedAt: null,
+    source: 'manual',
+    confidence: 1,
+    confirmedAt: null
   })
   return database
 }

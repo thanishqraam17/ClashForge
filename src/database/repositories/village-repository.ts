@@ -6,6 +6,7 @@ import {
   type VillagePersistInput,
   VillageValidationError
 } from '../../domain/village'
+import { parseStateSource } from './provenance'
 
 type VillageRow = {
   id: number
@@ -17,6 +18,9 @@ type VillageRow = {
   elixir_capacity: number
   dark_elixir_capacity: number
   last_scanned_at: string | null
+  source: string
+  confidence: number
+  confirmed_at: string | null
   created_at: string
   updated_at: string
 }
@@ -43,12 +47,12 @@ export class VillageRepository {
         `INSERT INTO villages (
           id, town_hall_level, gold, elixir, dark_elixir,
           gold_capacity, elixir_capacity, dark_elixir_capacity,
-          last_scanned_at,
+          last_scanned_at, source, confidence, confirmed_at,
           created_at, updated_at
         ) VALUES (
           @id, @townHallLevel, @gold, @elixir, @darkElixir,
           @goldCapacity, @elixirCapacity, @darkElixirCapacity,
-          @lastScannedAt,
+          @lastScannedAt, @source, @confidence, @confirmedAt,
           @createdAt, @updatedAt
         )`
       )
@@ -62,6 +66,9 @@ export class VillageRepository {
         elixirCapacity: input.elixirCapacity,
         darkElixirCapacity: input.darkElixirCapacity,
         lastScannedAt: input.lastScannedAt?.toISOString() ?? null,
+        source: input.source,
+        confidence: input.confidence,
+        confirmedAt: input.confirmedAt?.toISOString() ?? null,
         createdAt: now,
         updatedAt: now
       })
@@ -90,6 +97,9 @@ export class VillageRepository {
           elixir_capacity = @elixirCapacity,
           dark_elixir_capacity = @darkElixirCapacity,
           last_scanned_at = @lastScannedAt,
+          source = @source,
+          confidence = @confidence,
+          confirmed_at = @confirmedAt,
           updated_at = @updatedAt
         WHERE id = @id`
       )
@@ -103,6 +113,9 @@ export class VillageRepository {
         elixirCapacity: village.elixirCapacity,
         darkElixirCapacity: village.darkElixirCapacity,
         lastScannedAt: village.lastScannedAt?.toISOString() ?? null,
+        source: village.source,
+        confidence: village.confidence,
+        confirmedAt: village.confirmedAt?.toISOString() ?? null,
         updatedAt
       })
 
@@ -139,6 +152,9 @@ function mapRowToVillage(row: VillageRow): Village {
     elixirCapacity: row.elixir_capacity,
     darkElixirCapacity: row.dark_elixir_capacity,
     lastScannedAt: row.last_scanned_at ? new Date(row.last_scanned_at) : null,
+    source: parseStateSource(row.source),
+    confidence: row.confidence,
+    confirmedAt: row.confirmed_at ? new Date(row.confirmed_at) : null,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at)
   }

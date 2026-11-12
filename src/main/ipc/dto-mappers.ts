@@ -24,6 +24,9 @@ export function toVillageDto(village: Village): VillageDto {
     elixirCapacity: village.elixirCapacity,
     darkElixirCapacity: village.darkElixirCapacity,
     lastScannedAt: isoOrNull(village.lastScannedAt),
+    source: village.source,
+    confidence: village.confidence,
+    confirmedAt: isoOrNull(village.confirmedAt),
     createdAt: iso(village.createdAt),
     updatedAt: iso(village.updatedAt)
   }

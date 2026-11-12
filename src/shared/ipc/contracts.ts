@@ -16,6 +16,7 @@ import type {
   ValidationStatus
 } from '../../domain/catalogue'
 import type { ItemAtTownHall } from '../../domain/town-hall-rules'
+import type { StateSource } from '../../domain/village-state'
 import type { TownHallComparison, TownHallSummary } from '../../services/town-hall-service'
 import {
   UPGRADE_HISTORY_ENTITY_TYPES,
@@ -59,6 +60,9 @@ export type VillageDto = {
   elixirCapacity: number
   darkElixirCapacity: number
   lastScannedAt: IsoTimestamp | null
+  source: StateSource
+  confidence: number
+  confirmedAt: IsoTimestamp | null
   createdAt: IsoTimestamp
   updatedAt: IsoTimestamp
 }

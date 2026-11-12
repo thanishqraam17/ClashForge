@@ -13,7 +13,10 @@ const sampleInput = {
   goldCapacity: 8_000_000,
   elixirCapacity: 8_000_000,
   darkElixirCapacity: 300_000,
-  lastScannedAt: new Date('2026-09-14T10:00:00.000Z')
+  lastScannedAt: new Date('2026-09-14T10:00:00.000Z'),
+  source: 'manual' as const,
+  confidence: 1,
+  confirmedAt: null
 }
 
 describe('VillageRepository smoke', () => {
