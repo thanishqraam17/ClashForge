@@ -127,7 +127,11 @@ These matter for the importer because ClashForge can't get them from an export:
 - Laboratory level or Laboratory state, separate from the research `timer` on units
 - Game version, and village or account name
 
-## Implications for the importer (to be decided before implementation)
+## How ClashForge uses this
+
+The importer's interpretation of each field is recorded, with a status (`observed`, `inferred`, `unverified` or `verified`) and evidence, in `src/game-data/export-semantics.json`. To change how a field is used, change that file and update the evidence; don't change code. See the README section "Data export import".
+
+## Implications for the importer (decided in Phase 6)
 
 1. **Catalogue mapping.** Catalogue items need a verified game `data` id field. The bundled catalogue is empty and has no such field, so an import can parse and preview an export but can't map any item yet. Unmapped ids must be reported, never guessed.
 2. **Upgrades without a builder.** The village state model requires every active upgrade to have a builder (schema version 3). The export never says which builder is busy. Importing an upgrade therefore needs a decision on how to handle this.

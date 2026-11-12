@@ -114,3 +114,27 @@ Schema version 3 (`src/database/migrations/003_village_state.sql`) stores the pl
 - the result passes normal validation.
 
 A multi-building record converts completely or not at all. Converted values are marked unconfirmed. Every other record stays `pending` with a note, available through `legacy.list()` for manual reconciliation. Nothing is discarded.
+
+## Data export import
+
+Imports the in-game Data Export (Settings → More Settings → Data Export). The observed format is documented in [docs/data-export-format.md](docs/data-export-format.md).
+
+**Flow:** parse → plan → preview → apply.
+
+1. **Parse** (`src/import/export-parser.ts`): checks structure and types, and keeps known fields exactly as exported. A missing `cnt` stays empty here, never 1. Unknown fields and sections are reported by name and location only; their values are not kept. The player tag is never stored or logged.
+2. **Plan** (`src/import/import-planner.ts`): maps entries to catalogue items through verified `gameDataId`s only, and proposes changes. The rules for interpreting export fields live in `src/game-data/export-semantics.json`, each with a status:
+   - `observed`: `lvl`, an explicit `cnt`;
+   - `inferred`: a missing `cnt` means one instance. Changes that rely on it are marked `basis: inferred` and listed in the preview;
+   - `unverified`: `timer`. An unverified timer is recorded but never becomes an upgrade.
+3. **Preview**: stores the import (`export_imports`) and every entry as observed (`export_observations`, which can't be edited), including the original export timestamp and raw timers.
+4. **Apply** (`src/services/import-service.ts`): one transaction, with a snapshot before and after. It applies only the changes you accept:
+   - removals must be accepted individually;
+   - **every change that touches an active upgrade or research is a conflict** and needs `keep-current` or `apply-export`, whatever the record's source;
+   - applied values get `source: data-export`, the confidence of the rules they relied on, and `confirmed_at` set when you accept them;
+   - if the village changed since the preview, apply fails with `STALE_PREVIEW`.
+
+An import never changes resources, storage capacities or the builder count.
+
+**Builder assignment.** The export never says which builder is busy. An upgrade that comes from imported data can therefore record its builder as `unknown`; manual upgrades always need a confirmed, free builder. While any upgrade has an unknown builder, no builder is reported as free: availability is given as a `freeMin`–`freeMax` range with `isConfirmed: false`.
+
+**Current limits.** The bundled catalogue has no verified `gameDataId`s and every timer rule is unverified. A real export therefore previews as "parsed, nothing mapped" and changes nothing. Raw exports belong in `samples/private/`, which is git-ignored. `src/import/fixtures/export-redacted.json` keeps the real structure with every value fabricated.
