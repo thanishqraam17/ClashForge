@@ -154,107 +154,175 @@ function expandIdle(
   const idleByLevel = new Map<number, VillageItemInstance[]>()
   for (const i of idle) idleByLevel.set(i.level, [...(idleByLevel.get(i.level) ?? []), i])
 
-  // Keep exact matches; count the freed slots per level.
-  const fatesByLevel = new Map<number, Fate[]>()
-  const freedSlots: Array<{ level: number; released: VillageItemInstance | null }> = []
+  // Keep exact matches; collect the freed idle slots (one per instance not kept).
+  const keepsByLevel = new Map<number, number>()
+  const idleSlots: number[] = []
   for (const [level, instances] of [...idleByLevel.entries()].sort(([a], [b]) => a - b)) {
     const keep = Math.min(instances.length, left.get(level) ?? 0)
     left.set(level, (left.get(level) ?? 0) - keep)
-    fatesByLevel.set(level, Array.from({ length: keep }, () => ({ kind: 'keep' }) as Fate))
-    for (let i = keep; i < instances.length; i += 1) freedSlots.push({ level, released: null })
+    keepsByLevel.set(level, keep)
+    for (let i = keep; i < instances.length; i += 1) idleSlots.push(level)
   }
-  const released = upgrading.filter((_, i) => combo[i] === 'release')
-  // Idle slots pair first, then released upgrades; each ascending by level.
-  freedSlots.sort((a, b) => a.level - b.level)
-  for (const u of [...released].sort((a, b) => a.level - b.level || a.instanceNumber - b.instanceNumber)) {
-    freedSlots.push({ level: u.level, released: u })
-  }
+  const released = upgrading
+    .filter((_, i) => combo[i] === 'release')
+    .sort((a, b) => a.level - b.level || a.instanceNumber - b.instanceNumber)
 
   const remainingLevels: number[] = []
   for (const [level, count] of [...left.entries()].sort(([a], [b]) => a - b)) {
     for (let i = 0; i < count; i += 1) remainingLevels.push(level)
   }
-  const releasedFates = new Map<number, Fate>()
-  freedSlots.forEach((slot, index) => {
-    const fate: Fate = index < remainingLevels.length ? { kind: 'change', to: remainingLevels[index]! } : { kind: 'remove' }
-    if (slot.released) releasedFates.set(slot.released.id, fate)
-    else fatesByLevel.get(slot.level)!.push(fate)
-  })
-  const additionLevels = remainingLevels.slice(freedSlots.length)
-  if (releasedMustBeRemoved && [...releasedFates.values()].some((fate) => fate.kind !== 'remove')) {
+
+  // How many freed instances have no exported level left: they are removed.
+  // Released upgrades are removed first (latest in order first), then idle slots.
+  const removals = Math.max(0, idleSlots.length + released.length - remainingLevels.length)
+  const releasedRemoved = Math.min(removals, released.length)
+  const idleRemovals = removals - releasedRemoved
+  const releasedKept = released.slice(0, released.length - releasedRemoved)
+  if (releasedMustBeRemoved && releasedKept.length > 0) {
     return true // not a plausible alternative; keep searching
   }
 
-  // Distribute each level's fates over its instances, per provenance group.
-  const levels = [...fatesByLevel.keys()].sort((a, b) => a - b)
-  const perLevelOptions: Array<Array<Map<number, Fate>>> = []
-  for (const level of levels) {
-    const options = distributions(idleByLevel.get(level)!, fatesByLevel.get(level)!, MAX_INTERPRETATIONS + 1)
-    // More options at one level than the limit already means too many interpretations.
-    if (options.length > MAX_INTERPRETATIONS) {
-      markOverflow()
-      return false
-    }
-    perLevelOptions.push(options)
+  // Which idle slots are removed. Levels with the same provenance signature
+  // are interchangeable: within a signature the lowest levels go first. Each
+  // distinct split of the removals across signatures is an interpretation.
+  const signatureOf = (level: number) =>
+    [...new Set(idleByLevel.get(level)!.map(provenanceClass))].sort().join('+')
+  const buckets: Array<{ signature: string; levels: number[] }> = []
+  for (const level of idleSlots) {
+    const signature = signatureOf(level)
+    const bucket = buckets.find((b) => b.signature === signature)
+    if (bucket) bucket.levels.push(level)
+    else buckets.push({ signature, levels: [level] })
+  }
+  const removalChoices = splitRemovals(
+    buckets.map((b) => b.levels.length),
+    idleRemovals,
+    MAX_INTERPRETATIONS + 1
+  )
+  if (removalChoices.length > MAX_INTERPRETATIONS) {
+    markOverflow()
+    return false
   }
 
-  const build = (choice: Array<Map<number, Fate>>): InstanceOperations => {
-    const ops: InstanceOperations = {
-      completions: [],
-      levelChanges: [],
-      removals: [],
-      additions: [],
-      stillUpgrading: [],
-      finalLevels: []
+  for (const split of removalChoices) {
+    const removed: number[] = []
+    buckets.forEach((bucket, i) => removed.push(...bucket.levels.slice(0, split[i]!)))
+    const kept = [...idleSlots]
+    for (const level of removed) kept.splice(kept.indexOf(level), 1)
+
+    // Remaining freed instances (idle first, then released) take the
+    // remaining exported levels in ascending order; extras become additions.
+    const fatesByLevel = new Map<number, Fate[]>()
+    for (const [level, keep] of keepsByLevel) {
+      fatesByLevel.set(level, Array.from({ length: keep }, () => ({ kind: 'keep' }) as Fate))
     }
-    const apply = (instance: VillageItemInstance, fate: Fate, endsUpgrade: boolean) => {
-      if (fate.kind === 'keep') {
-        ops.finalLevels.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: instance.level, upgrading: false })
-      } else if (fate.kind === 'change') {
-        ops.levelChanges.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, fromLevel: instance.level, toLevel: fate.to, endsUpgrade })
-        ops.finalLevels.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: fate.to, upgrading: false })
-      } else {
-        ops.removals.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: instance.level, endsUpgrade })
-      }
-    }
-    upgrading.forEach((u, i) => {
-      if (combo[i] === 'keep') {
-        ops.stillUpgrading.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.level, targetLevel: u.targetLevel! })
-        ops.finalLevels.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.level, upgrading: true })
-      } else if (combo[i] === 'complete') {
-        ops.completions.push({ instanceId: u.id, instanceNumber: u.instanceNumber, fromLevel: u.level, toLevel: u.targetLevel! })
-        ops.finalLevels.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.targetLevel!, upgrading: false })
-      } else {
-        apply(u, releasedFates.get(u.id)!, true)
-      }
+    for (const level of removed) fatesByLevel.get(level)!.push({ kind: 'remove' })
+    const releasedFates = new Map<number, Fate>()
+    const pairing: Array<{ level: number; released: VillageItemInstance | null }> = [
+      ...kept.map((level) => ({ level, released: null })),
+      ...releasedKept.map((u) => ({ level: u.level, released: u }))
+    ]
+    pairing.forEach((slot, index) => {
+      const fate: Fate = { kind: 'change', to: remainingLevels[index]! }
+      if (slot.released) releasedFates.set(slot.released.id, fate)
+      else fatesByLevel.get(slot.level)!.push(fate)
     })
-    for (const assignment of choice) {
-      for (const instance of idle) {
-        const fate = assignment.get(instance.id)
-        if (fate) apply(instance, fate, false)
-      }
-    }
-    let next = 1
-    for (const level of additionLevels) {
-      while (usedNumbers.has(next) || ops.additions.some((a) => a.instanceNumber === next)) next += 1
-      ops.additions.push({ instanceNumber: next, level })
-      ops.finalLevels.push({ instanceId: null, instanceNumber: next, level, upgrading: false })
-    }
-    for (const list of [ops.completions, ops.levelChanges, ops.removals, ops.stillUpgrading, ops.finalLevels]) {
-      ;(list as Array<{ instanceNumber: number }>).sort((a, b) => a.instanceNumber - b.instanceNumber)
-    }
-    return ops
-  }
+    for (const u of released.slice(released.length - releasedRemoved)) releasedFates.set(u.id, { kind: 'remove' })
+    const additionLevels = remainingLevels.slice(pairing.length)
 
-  // Cartesian product over levels, generated lazily.
-  const walk = (index: number, chosen: Array<Map<number, Fate>>): boolean => {
-    if (index === perLevelOptions.length) return record(build(chosen))
-    for (const option of perLevelOptions[index]!) {
-      if (!walk(index + 1, [...chosen, option])) return false
+    // Distribute each level's fates over its instances, per provenance group.
+    const levels = [...fatesByLevel.keys()].sort((a, b) => a - b)
+    const perLevelOptions: Array<Array<Map<number, Fate>>> = []
+    for (const level of levels) {
+      const options = distributions(idleByLevel.get(level)!, fatesByLevel.get(level)!, MAX_INTERPRETATIONS + 1)
+      // More options at one level than the limit already means too many interpretations.
+      if (options.length > MAX_INTERPRETATIONS) {
+        markOverflow()
+        return false
+      }
+      perLevelOptions.push(options)
     }
-    return true
+
+    const build = (choice: Array<Map<number, Fate>>): InstanceOperations => {
+      const ops: InstanceOperations = {
+        completions: [],
+        levelChanges: [],
+        removals: [],
+        additions: [],
+        stillUpgrading: [],
+        finalLevels: []
+      }
+      const apply = (instance: VillageItemInstance, fate: Fate, endsUpgrade: boolean) => {
+        if (fate.kind === 'keep') {
+          ops.finalLevels.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: instance.level, upgrading: false })
+        } else if (fate.kind === 'change') {
+          ops.levelChanges.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, fromLevel: instance.level, toLevel: fate.to, endsUpgrade })
+          ops.finalLevels.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: fate.to, upgrading: false })
+        } else {
+          ops.removals.push({ instanceId: instance.id, instanceNumber: instance.instanceNumber, level: instance.level, endsUpgrade })
+        }
+      }
+      upgrading.forEach((u, i) => {
+        if (combo[i] === 'keep') {
+          ops.stillUpgrading.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.level, targetLevel: u.targetLevel! })
+          ops.finalLevels.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.level, upgrading: true })
+        } else if (combo[i] === 'complete') {
+          ops.completions.push({ instanceId: u.id, instanceNumber: u.instanceNumber, fromLevel: u.level, toLevel: u.targetLevel! })
+          ops.finalLevels.push({ instanceId: u.id, instanceNumber: u.instanceNumber, level: u.targetLevel!, upgrading: false })
+        } else {
+          apply(u, releasedFates.get(u.id)!, true)
+        }
+      })
+      for (const assignment of choice) {
+        for (const instance of idle) {
+          const fate = assignment.get(instance.id)
+          if (fate) apply(instance, fate, false)
+        }
+      }
+      let next = 1
+      for (const level of additionLevels) {
+        while (usedNumbers.has(next) || ops.additions.some((a) => a.instanceNumber === next)) next += 1
+        ops.additions.push({ instanceNumber: next, level })
+        ops.finalLevels.push({ instanceId: null, instanceNumber: next, level, upgrading: false })
+      }
+      for (const list of [ops.completions, ops.levelChanges, ops.removals, ops.stillUpgrading, ops.finalLevels]) {
+        ;(list as Array<{ instanceNumber: number }>).sort((a, b) => a.instanceNumber - b.instanceNumber)
+      }
+      return ops
+    }
+
+    // Cartesian product over levels, generated lazily.
+    const walk = (index: number, chosen: Array<Map<number, Fate>>): boolean => {
+      if (index === perLevelOptions.length) return record(build(chosen))
+      for (const option of perLevelOptions[index]!) {
+        if (!walk(index + 1, [...chosen, option])) return false
+      }
+      return true
+    }
+    if (!walk(0, [])) return false
   }
-  return walk(0, [])
+  return true
+}
+
+/**
+ * Ways to take `total` removals from buckets of the given sizes, at most
+ * `limit` of them, in a fixed order. One bucket gives exactly one way.
+ */
+function splitRemovals(sizes: number[], total: number, limit: number): number[][] {
+  const out: number[][] = []
+  const recurse = (i: number, need: number, acc: number[]) => {
+    if (out.length >= limit) return
+    if (i === sizes.length) {
+      if (need === 0) out.push(acc)
+      return
+    }
+    const capacityAfter = sizes.slice(i + 1).reduce((a, b) => a + b, 0)
+    for (let take = Math.min(need, sizes[i]!); take >= Math.max(0, need - capacityAfter); take -= 1) {
+      recurse(i + 1, need - take, [...acc, take])
+    }
+  }
+  recurse(0, total, [])
+  return out
 }
 
 /**

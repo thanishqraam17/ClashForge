@@ -202,6 +202,51 @@ describe('matchInstances: same-level provenance (F2)', () => {
   })
 })
 
+describe('matchInstances: removals across levels (audit N3)', () => {
+  it('asks which instance is removed when the candidates differ in provenance', () => {
+    // Confirmed #1 at 2, low-confidence estimate #2 at 4; the export keeps only one, at 5.
+    const result = outcomes([5], [inst(1, 2), inst(2, 4, { source: 'timer-estimate', confidence: 0.3, confirmed: false })])
+    expect(result.map(describe_)).toEqual([['#2 4->5', '#1 removed'], ['#1 2->5', '#2 removed']])
+  })
+
+  it('removes the lowest level automatically when provenance is equal (decision C)', () => {
+    expect(outcomes([5], [inst(1, 2), inst(2, 4)]).map(describe_)).toEqual([['#2 4->5', '#1 removed']])
+    expect(outcomes([6, 7], [inst(1, 2), inst(2, 4), inst(3, 5)]).map(describe_)).toEqual([
+      ['#2 4->6', '#3 5->7', '#1 removed']
+    ])
+  })
+
+  it('treats levels with the same mix of provenance groups as interchangeable', () => {
+    const estimate = { source: 'timer-estimate' as const, confidence: 0.3, confirmed: false }
+    // Levels 2 and 3 are both confirmed-only; level 4 is estimate-only. One removal.
+    const result = outcomes([6, 7], [inst(1, 2), inst(2, 3), inst(3, 4, estimate)])
+    expect(result.map(describe_)).toEqual([['#2 3->6', '#3 4->7', '#1 removed'], ['#1 2->6', '#2 3->7', '#3 removed']])
+  })
+
+  it('removes released upgrades before idle instances, as before', () => {
+    expect(outcomes([], [inst(1, 3, { target: 4 }), inst(2, 2)]).map(describe_)).toEqual([
+      ['#1 removed (upgrade ended)', '#2 removed']
+    ])
+  })
+
+  it('stops when the removal choices alone exceed the limit', () => {
+    const groups = [
+      {},
+      { confirmed: false },
+      { source: 'timer-estimate' as const, confidence: 0.3, confirmed: false },
+      { source: 'data-export' as const, confidence: 0.95, confirmed: false },
+      { source: 'data-export' as const, confidence: 0.5, confirmed: false },
+      { source: 'screenshot' as const, confidence: 0.5, confirmed: false },
+      { source: 'live-capture' as const, confidence: 0.5, confirmed: false },
+      { source: 'data-export' as const, confidence: 0.1, confirmed: false },
+      { source: 'screenshot' as const, confidence: 0.95, confirmed: false }
+    ]
+    // Nine levels, each a different provenance group, one survivor: nine possible removal sets.
+    const current = groups.map((g, i) => inst(i + 1, i + 1, g))
+    expect(matchInstances([20, 20, 20, 20, 20, 20, 20, 20], current).kind).toBe('too-many')
+  })
+})
+
 describe('matchInstances: limits and determinism', () => {
   it('stops at the interpretation limit instead of enumerating everything', () => {
     // Four upgrades, export {3,3,4,4}: which two are still upgrading -> C(4,2) = 6, within the limit.
