@@ -1,13 +1,23 @@
 import { parseGameCatalogue } from '../domain/catalogue-validation'
 import type { GameCatalogue } from '../domain/catalogue'
+import type { TownHallRuleSet } from '../domain/town-hall-rules'
+import { parseTownHallRules } from '../domain/town-hall-rules-validation'
 import rawItems from './items.json'
 import rawManifest from './manifest.json'
+import rawTownHallRules from './town-hall-rules.json'
+
+export type BundledGameData = {
+  catalogue: GameCatalogue
+  townHallRules: TownHallRuleSet
+}
 
 /**
- * Loads and validates the game data bundled with the app. Throws
- * CatalogueValidationError if the shipped files are malformed, which is caught
- * by tests long before a release.
+ * Loads and validates the game data bundled with the app. Throws a validation
+ * error if the shipped files are malformed or inconsistent with each other,
+ * which tests catch long before a release.
  */
-export function loadBundledGameCatalogue(): GameCatalogue {
-  return parseGameCatalogue(rawManifest, rawItems)
+export function loadBundledGameData(): BundledGameData {
+  const catalogue = parseGameCatalogue(rawManifest, rawItems)
+  const townHallRules = parseTownHallRules(rawTownHallRules, catalogue)
+  return { catalogue, townHallRules }
 }

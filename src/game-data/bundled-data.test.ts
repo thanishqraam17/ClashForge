@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { loadBundledGameCatalogue } from './index'
+import { loadBundledGameData } from './index'
 
 describe('bundled game data', () => {
-  it('passes catalogue validation', () => {
-    expect(() => loadBundledGameCatalogue()).not.toThrow()
+  it('passes catalogue and town hall rule validation', () => {
+    expect(() => loadBundledGameData()).not.toThrow()
   })
 
 })
