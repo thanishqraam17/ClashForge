@@ -1,0 +1,253 @@
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createDatabase, type ClashForgeDatabase } from '../../database/client/database'
+import {
+  ALL_IPC_CHANNELS,
+  type IpcResult,
+  type VillageSaveInput
+} from '../../shared/ipc/contracts'
+import { createIpcHandlers, type IpcHandlerMap } from './handlers'
+
+const villageInput: VillageSaveInput = {
+  townHallLevel: 9,
+  gold: 1_000,
+  elixir: 2_000,
+  darkElixir: 30,
+  goldCapacity: 8_000_000,
+  elixirCapacity: 8_000_000,
+  darkElixirCapacity: 300_000,
+  builderCount: 4,
+  availableBuilders: 2,
+  lastScannedAt: '2026-09-14T10:30:00.000Z'
+}
+
+function expectOk<T>(result: IpcResult<T>): T {
+  if (!result.ok) {
+    throw new Error(`expected ok, got ${result.error.code}: ${result.error.message}`)
+  }
+  return result.data
+}
+
+describe('IPC handlers', () => {
+  let dir: string
+  let database: ClashForgeDatabase
+  let handlers: IpcHandlerMap
+  const logger = { error: vi.fn() }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
+    database = createDatabase({ dbPath: join(dir, 'test.db') })
+    logger.error.mockReset()
+    handlers = createIpcHandlers(database, logger)
+  })
+
+  afterEach(() => {
+    database.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('defines a handler for every contract channel', () => {
+    expect(Object.keys(handlers).sort()).toEqual([...ALL_IPC_CHANNELS].sort())
+  })
+
+  it('returns null before a village exists, then saves and reads it as a DTO', () => {
+    expect(expectOk(handlers['village:get-current'](undefined))).toBeNull()
+
+    const saved = expectOk(handlers['village:save'](villageInput))
+    expect(saved).toMatchObject({ id: 1, townHallLevel: 9, gold: 1_000 })
+    expect(saved.lastScannedAt).toBe('2026-09-14T10:30:00.000Z')
+    expect(typeof saved.createdAt).toBe('string')
+
+    const updated = expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 10 }))
+    expect(updated.townHallLevel).toBe(10)
+    expect(expectOk(handlers['village:get-current'](undefined))?.townHallLevel).toBe(10)
+  })
+
+  it('returns plain, structured-clone-safe data', () => {
+    const saved = expectOk(handlers['village:save'](villageInput))
+    expect(structuredClone(saved)).toEqual(saved)
+    expect(JSON.parse(JSON.stringify(saved))).toEqual(saved)
+  })
+
+  it('rejects malformed payloads with VALIDATION_ERROR', () => {
+    const cases: Array<[keyof IpcHandlerMap, unknown]> = [
+      ['village:save', null],
+      ['village:save', { ...villageInput, gold: -1 }],
+      ['village:save', { ...villageInput, gold: 1.5 }],
+      ['village:save', { ...villageInput, gold: '100' }],
+      ['village:save', { ...villageInput, extra: true }],
+      ['village:save', { ...villageInput, lastScannedAt: 'yesterday' }],
+      ['village:get-current', { unexpected: 1 }],
+      ['history:get-recent', { limit: 0 }],
+      ['history:get-recent', { limit: 10_000 }]
+    ]
+    for (const [channel, payload] of cases) {
+      const result = handlers[channel](payload)
+      expect(result.ok, `${channel} ${JSON.stringify(payload)}`).toBe(false)
+      if (!result.ok) {
+        expect(result.error.code).toBe('VALIDATION_ERROR')
+      }
+    }
+  })
+
+  it('surfaces domain validation errors as VALIDATION_ERROR', () => {
+    expectOk(handlers['village:save'](villageInput))
+    const result = handlers['buildings:save']({
+      name: 'Army Camp',
+      category: 'ARMY',
+      level: 7,
+      quantity: 1,
+      isUpgrading: false,
+      upgradeStartedAt: '2026-09-15T08:00:00.000Z',
+      upgradeEndsAt: '2026-09-14T08:00:00.000Z'
+    })
+    expect(result).toEqual({
+      ok: false,
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'upgradeEndsAt cannot be before upgradeStartedAt'
+      }
+    })
+  })
+
+  it('requires a village before saving village items', () => {
+    const result = handlers['heroes:save']({
+      name: 'Barbarian King',
+      level: 30,
+      isUpgrading: false,
+      upgradeStartedAt: null,
+      upgradeEndsAt: null
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('VILLAGE_NOT_INITIALISED')
+    }
+  })
+
+  it('creates and updates buildings, heroes and research', () => {
+    expectOk(handlers['village:save'](villageInput))
+
+    const building = expectOk(
+      handlers['buildings:save']({
+        name: 'Army Camp',
+        category: 'ARMY',
+        level: 7,
+        quantity: 1,
+        isUpgrading: true,
+        upgradeStartedAt: '2026-09-14T08:00:00.000Z',
+        upgradeEndsAt: '2026-09-15T08:00:00.000Z'
+      })
+    )
+    expect(building.villageId).toBe(1)
+    const updatedBuilding = expectOk(
+      handlers['buildings:save']({
+        id: building.id,
+        name: 'Army Camp',
+        category: 'ARMY',
+        level: 8,
+        quantity: 1,
+        isUpgrading: false,
+        upgradeStartedAt: null,
+        upgradeEndsAt: null
+      })
+    )
+    expect(updatedBuilding).toMatchObject({ id: building.id, level: 8, upgradeEndsAt: null })
+    expect(expectOk(handlers['buildings:list'](undefined))).toHaveLength(1)
+
+    const hero = expectOk(
+      handlers['heroes:save']({
+        name: 'Archer Queen',
+        level: 30,
+        isUpgrading: false,
+        upgradeStartedAt: null,
+        upgradeEndsAt: null
+      })
+    )
+    expectOk(
+      handlers['heroes:save']({
+        id: hero.id,
+        name: 'Archer Queen',
+        level: 31,
+        isUpgrading: false,
+        upgradeStartedAt: null,
+        upgradeEndsAt: null
+      })
+    )
+    expect(expectOk(handlers['heroes:list'](undefined))[0]?.level).toBe(31)
+
+    const research = expectOk(
+      handlers['research:save']({
+        name: 'Balloon',
+        category: 'TROOP',
+        level: 5,
+        isResearching: true,
+        researchStartedAt: null,
+        researchEndsAt: '2026-09-20T00:00:00.000Z'
+      })
+    )
+    expect(research.researchEndsAt).toBe('2026-09-20T00:00:00.000Z')
+    expect(expectOk(handlers['research:list'](undefined))).toHaveLength(1)
+  })
+
+  it('returns NOT_FOUND when updating a record that does not exist', () => {
+    expectOk(handlers['village:save'](villageInput))
+    const result = handlers['buildings:save']({
+      id: 999,
+      name: 'Cannon',
+      category: 'DEFENSE',
+      level: 1,
+      quantity: 1,
+      isUpgrading: false,
+      upgradeStartedAt: null,
+      upgradeEndsAt: null
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.code).toBe('NOT_FOUND')
+    }
+    expect(expectOk(handlers['buildings:list'](undefined))).toHaveLength(0)
+  })
+
+  it('records history and returns the most recent entries with a limit', () => {
+    expectOk(handlers['village:save'](villageInput))
+    for (const toLevel of [2, 3, 4]) {
+      expectOk(
+        handlers['history:record']({
+          entityType: 'building',
+          entityName: 'Cannon',
+          fromLevel: toLevel - 1,
+          toLevel,
+          startedAt: '2026-09-14T08:00:00.000Z',
+          completedAt: null
+        })
+      )
+    }
+    expect(expectOk(handlers['history:get-recent'](undefined))).toHaveLength(3)
+    const recent = expectOk(handlers['history:get-recent']({ limit: 2 }))
+    expect(recent.map((entry) => entry.toLevel)).toEqual([4, 3])
+
+    const invalidType = handlers['history:record']({
+      entityType: 'wall',
+      entityName: 'Wall',
+      fromLevel: 1,
+      toLevel: 2,
+      startedAt: '2026-09-14T08:00:00.000Z',
+      completedAt: null
+    })
+    expect(invalidType.ok).toBe(false)
+  })
+
+  it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {
+    database.close()
+    const result = handlers['village:get-current'](undefined)
+    expect(result).toEqual({
+      ok: false,
+      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' }
+    })
+    expect(logger.error).toHaveBeenCalledOnce()
+    // Reopen so afterEach can close cleanly.
+    database = createDatabase({ dbPath: join(dir, 'test.db') })
+  })
+})

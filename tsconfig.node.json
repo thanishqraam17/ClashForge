@@ -13,6 +13,7 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/database/**/*",
-    "src/domain/**/*"
+    "src/domain/**/*",
+    "src/shared/**/*"
   ]
 }

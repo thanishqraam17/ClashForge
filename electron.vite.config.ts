@@ -8,7 +8,14 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin()]
   },
   preload: {
-    plugins: [externalizeDepsPlugin()]
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        // Sandboxed preloads must be CommonJS; package.json "type": "module"
+        // would otherwise emit index.mjs, which a sandboxed renderer cannot load.
+        output: { format: 'cjs', entryFileNames: '[name].cjs' }
+      }
+    }
   },
   renderer: {
     resolve: {

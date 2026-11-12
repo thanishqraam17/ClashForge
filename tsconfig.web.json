@@ -21,5 +21,5 @@
       "@domain/*": ["src/domain/*"]
     }
   },
-  "include": ["src/renderer/**/*", "src/domain/**/*", "src/features/**/*"]
+  "include": ["src/renderer/**/*", "src/domain/**/*", "src/features/**/*", "src/shared/**/*"]
 }

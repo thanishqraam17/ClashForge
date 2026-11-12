@@ -1,11 +1,14 @@
 import { createDatabase, type ClashForgeDatabase } from '../database/client/database'
 import { resolveProductionDatabasePath } from '../database/client/database-path'
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
+import { createIpcHandlers } from './ipc/handlers'
+import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
 
 const isDev = !app.isPackaged
 
 let appDatabase: ClashForgeDatabase | null = null
+let unregisterIpc: (() => void) | null = null
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -17,9 +20,10 @@ function createWindow(): void {
     autoHideMenuBar: true,
     backgroundColor: '#0f1114',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   })
 
@@ -44,6 +48,12 @@ app.whenReady().then(() => {
   appDatabase = createDatabase({ dbPath })
   appDatabase.healthCheck()
 
+  unregisterIpc = registerIpcHandlers(
+    ipcMain,
+    createIpcHandlers(appDatabase),
+    createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
+  )
+
   if (isDev) {
     console.info('[ClashForge] Database ready at', dbPath)
   }
@@ -56,6 +66,8 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
+  unregisterIpc?.()
+  unregisterIpc = null
   appDatabase?.close()
   appDatabase = null
 })
