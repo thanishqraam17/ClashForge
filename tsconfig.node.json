@@ -16,6 +16,7 @@
     "src/database/**/*",
     "src/domain/**/*",
     "src/shared/**/*",
+    "src/services/**/*",
     "src/game-data/**/*",
     "src/game-data/**/*.json"
   ]
