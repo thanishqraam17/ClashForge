@@ -151,6 +151,95 @@ describe('migrations', () => {
     })
   })
 
+  describe('v2 -> v4 (populated, in one run)', () => {
+    beforeEach(() => {
+      seedVersion2(db)
+      runMigrations(db)
+    })
+
+    it('reaches the latest version with integrity and foreign keys intact', () => {
+      expect(readAppliedVersion(db)).toBe(LATEST_SCHEMA_VERSION)
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    })
+
+    it('keeps the village, its resources and its builders', () => {
+      expect(
+        db
+          .prepare(
+            'SELECT town_hall_level, gold, elixir, dark_elixir, gold_capacity, elixir_capacity, dark_elixir_capacity, source, confirmed_at FROM villages'
+          )
+          .get()
+      ).toEqual({
+        town_hall_level: 9,
+        gold: 100,
+        elixir: 200,
+        dark_elixir: 30,
+        gold_capacity: 1000,
+        elixir_capacity: 1000,
+        dark_elixir_capacity: 500,
+        source: 'manual',
+        confirmed_at: T0
+      })
+      expect(db.prepare('SELECT slot FROM builders ORDER BY slot').all()).toEqual([
+        { slot: 1 },
+        { slot: 2 },
+        { slot: 3 },
+        { slot: 4 }
+      ])
+      expect(
+        db.prepare('SELECT builder_count, available_builders FROM legacy_village_builder_counts').get()
+      ).toEqual({ builder_count: 4, available_builders: 2 })
+    })
+
+    it('keeps every legacy record, including its active upgrade, pending reconciliation', () => {
+      expect(
+        db
+          .prepare(
+            `SELECT name, level, quantity, is_upgrading, upgrade_started_at, upgrade_ends_at, reconciliation_status
+             FROM legacy_buildings ORDER BY id`
+          )
+          .all()
+      ).toEqual([
+        {
+          name: 'Cannon',
+          level: 7,
+          quantity: 3,
+          is_upgrading: 1,
+          upgrade_started_at: T0,
+          upgrade_ends_at: '2026-09-15T10:00:00.000Z',
+          reconciliation_status: 'pending'
+        },
+        {
+          name: 'Army Camp',
+          level: 6,
+          quantity: 4,
+          is_upgrading: 0,
+          upgrade_started_at: null,
+          upgrade_ends_at: null,
+          reconciliation_status: 'pending'
+        }
+      ])
+      expect(db.prepare('SELECT name, level FROM legacy_heroes').all()).toEqual([
+        { name: 'Barbarian King', level: 20 }
+      ])
+      expect(
+        db.prepare('SELECT name, level, is_researching, research_ends_at FROM legacy_research').all()
+      ).toEqual([{ name: 'Balloon', level: 5, is_researching: 1, research_ends_at: '2026-09-20T00:00:00.000Z' }])
+    })
+
+    it('keeps upgrade history and starts the new tables empty', () => {
+      expect(
+        db.prepare('SELECT entity_type, entity_name, from_level, to_level, started_at, completed_at FROM upgrade_history').all()
+      ).toEqual([
+        { entity_type: 'building', entity_name: 'Cannon', from_level: 6, to_level: 7, started_at: T0, completed_at: T0 }
+      ])
+      for (const table of ['village_items', 'research', 'village_snapshots', 'export_imports', 'export_observations']) {
+        expect(db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get(), table).toEqual({ n: 0 })
+      }
+    })
+  })
+
   describe('v3 constraints', () => {
     const now = T0
     beforeEach(() => {
