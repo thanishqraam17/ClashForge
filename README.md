@@ -65,3 +65,23 @@ Validation (`src/domain/town-hall-rules-validation.ts`) enforces that:
 - `unlockRequires` points at another item in the same game mode that can reach the required level by the unlock Town Hall.
 
 `maxTownHall` is set per game mode. It is `null` (unknown) until that mode has real data, and the app reports "no Town Hall data yet" instead of guessing.
+
+### Item artwork
+
+Read [docs/asset-licensing.md](docs/asset-licensing.md) before adding any image. **No game artwork is bundled yet**: whether official icons may be redistributed inside the app is still an open licensing question.
+
+How the asset system works once images are added:
+
+1. Put the file in `src/game-data/assets/<folder>/<file>.png` (lowercase kebab-case, `png` or `webp`).
+2. Add an entry to `src/game-data/assets.json` with `itemId`, `level` (`null` for the item's standard image), `assetPath`, `sourceName`, `sourceUrl`, `attribution`, the file's SHA-256 `checksum` and `lastVerifiedAt`.
+3. Tests validate the manifest against the catalogue and Town Hall rules.
+
+At runtime, images are served over the `clashforge-asset://` protocol. Only files listed in the manifest are served, and each file must match its checksum. Verified files are cached in memory.
+
+The `ItemImage` component shows:
+
+- the exact-level image when one exists;
+- the item's standard image labelled **Generic** when the requested level has no artwork (art from a different level is never used);
+- a neutral placeholder when there is no image.
+
+The unofficial-content notice required by Supercell's Fan Content Policy is always visible in the sidebar and on the Settings page, which also lists every artwork source.
