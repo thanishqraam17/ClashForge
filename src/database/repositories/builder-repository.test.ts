@@ -1,0 +1,63 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { LOCAL_VILLAGE_ID } from '../../domain/village'
+import { VillageStateValidationError } from '../../domain/village-state'
+import { createTestDatabase, TEST_CONFIRMED, type TestDatabase } from './test-helpers'
+
+describe('BuilderRepository', () => {
+  let t: TestDatabase
+
+  beforeEach(() => {
+    t = createTestDatabase({ withVillage: true })
+  })
+
+  afterEach(() => t.cleanup())
+
+  function builder(slot: number) {
+    return t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot, ...TEST_CONFIRMED })
+  }
+
+  it('creates and lists builders by slot', () => {
+    builder(2)
+    builder(1)
+    expect(t.database.builders.listByVillage(LOCAL_VILLAGE_ID).map((b) => b.slot)).toEqual([1, 2])
+    expect(() => builder(1)).toThrow(/UNIQUE/)
+    expect(() => builder(0)).toThrow(VillageStateValidationError)
+  })
+
+  it('updates provenance and refuses to move a builder between villages', () => {
+    const created = builder(1)
+    const updated = t.database.builders.update({ ...created, confidence: 0.7, confirmedAt: null })
+    expect(updated).toMatchObject({ confidence: 0.7, confirmedAt: null })
+    expect(() => t.database.builders.update({ ...created, villageId: 2 })).toThrow(
+      'A builder cannot move between villages'
+    )
+  })
+
+  it('links to the item it is upgrading and cannot be deleted while busy', () => {
+    const b = builder(1)
+    const item = t.database.villageItems.create({
+      villageId: LOCAL_VILLAGE_ID,
+      itemId: 'test-cannon',
+      instanceNumber: 1,
+      level: 3,
+      targetLevel: 4,
+      upgradeStartedAt: new Date('2026-11-12T08:00:00.000Z'),
+      upgradeEndsAt: new Date('2026-11-13T08:00:00.000Z'),
+      builderId: b.id,
+      ...TEST_CONFIRMED
+    })
+    expect(t.database.villageItems.getByBuilder(b.id)?.id).toBe(item.id)
+    expect(() => t.database.builders.delete(b.id)).toThrow(/FOREIGN KEY/)
+
+    t.database.villageItems.update({
+      ...item,
+      level: 4,
+      targetLevel: null,
+      upgradeStartedAt: null,
+      upgradeEndsAt: null,
+      builderId: null
+    })
+    expect(t.database.villageItems.getByBuilder(b.id)).toBeNull()
+    expect(t.database.builders.delete(b.id)).toBe(true)
+  })
+})
