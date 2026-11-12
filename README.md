@@ -40,3 +40,28 @@ The catalogue in `src/game-data` is validated on load (`src/domain/catalogue-val
 - The app flags the dataset as stale after 90 days.
 
 The bundled catalogue currently has **no items**: real values are only added after they have been cross-checked against at least two sources.
+
+### Town Hall rules
+
+`src/game-data/town-hall-rules.json` says what each Town Hall level allows for every catalogue item. Rules are written as **steps**: an entry at Town Hall N applies to N and every higher level until the item's next step, so only the Town Halls where something changes are listed.
+
+```json
+{
+  "itemId": "example-defense",
+  "steps": [
+    { "townHall": 3, "maxLevel": 2, "maxQuantity": 1 },
+    { "townHall": 5, "maxLevel": 4, "maxQuantity": 2 }
+  ],
+  "unlockRequires": []
+}
+```
+
+Validation (`src/domain/town-hall-rules-validation.ts`) enforces that:
+
+- every catalogue item has rules, and every rule refers to a catalogue item;
+- the first step is at the item's `introducedAtTownHall`;
+- steps are in ascending Town Hall order, never lower limits, and never repeat the previous step;
+- non-upgradeable items stay at level 1, and non-repeatable items at quantity 1;
+- `unlockRequires` points at another item in the same game mode that can reach the required level by the unlock Town Hall.
+
+`maxTownHall` is set per game mode. It is `null` (unknown) until that mode has real data, and the app reports "no Town Hall data yet" instead of guessing.
