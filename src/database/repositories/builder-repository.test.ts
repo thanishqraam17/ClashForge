@@ -44,6 +44,9 @@ describe('BuilderRepository', () => {
       upgradeStartedAt: new Date('2026-11-12T08:00:00.000Z'),
       upgradeEndsAt: new Date('2026-11-13T08:00:00.000Z'),
       builderId: b.id,
+      builderAssignment: 'confirmed',
+      upgradeObservedTimer: null,
+      upgradeObservedAt: null,
       ...TEST_CONFIRMED
     })
     expect(t.database.villageItems.getByBuilder(b.id)?.id).toBe(item.id)
@@ -55,7 +58,8 @@ describe('BuilderRepository', () => {
       targetLevel: null,
       upgradeStartedAt: null,
       upgradeEndsAt: null,
-      builderId: null
+      builderId: null,
+      builderAssignment: null
     })
     expect(t.database.villageItems.getByBuilder(b.id)).toBeNull()
     expect(t.database.builders.delete(b.id)).toBe(true)

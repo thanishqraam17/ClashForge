@@ -284,6 +284,15 @@ export function createVillageStateService({
           upgradeStartedAt: input.upgradeStartedAt,
           upgradeEndsAt: input.upgradeEndsAt,
           builderId: input.builderId,
+          // A person entering an upgrade names its builder; other callers only record one.
+          builderAssignment:
+            input.targetLevel === null
+              ? null
+              : provenance.source === 'manual'
+                ? ('confirmed' as const)
+                : ('assigned' as const),
+          upgradeObservedTimer: null,
+          upgradeObservedAt: null,
           ...provenance
         }
         if (input.id === undefined) {

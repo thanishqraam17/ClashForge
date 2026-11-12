@@ -1,5 +1,7 @@
 import type Database from 'better-sqlite3'
 import {
+  BUILDER_ASSIGNMENTS,
+  type BuilderAssignment,
   validateVillageItemInput,
   VillageStateValidationError,
   type VillageItemInstance,
@@ -17,6 +19,9 @@ type VillageItemRow = {
   upgrade_started_at: string | null
   upgrade_ends_at: string | null
   builder_id: number | null
+  builder_assignment: string | null
+  upgrade_observed_timer: number | null
+  upgrade_observed_at: string | null
   source: string
   confidence: number
   confirmed_at: string | null
@@ -36,6 +41,9 @@ function toParams(input: VillageItemPersistInput) {
     upgradeStartedAt: isoOrNull(input.upgradeStartedAt),
     upgradeEndsAt: isoOrNull(input.upgradeEndsAt),
     builderId: input.builderId,
+    builderAssignment: input.builderAssignment,
+    upgradeObservedTimer: input.upgradeObservedTimer,
+    upgradeObservedAt: isoOrNull(input.upgradeObservedAt),
     source: input.source,
     confidence: input.confidence,
     confirmedAt: isoOrNull(input.confirmedAt)
@@ -81,11 +89,13 @@ export class VillageItemRepository {
       .prepare(
         `INSERT INTO village_items (
           village_id, item_id, instance_number, level, target_level,
-          upgrade_started_at, upgrade_ends_at, builder_id,
+          upgrade_started_at, upgrade_ends_at, builder_id, builder_assignment,
+          upgrade_observed_timer, upgrade_observed_at,
           source, confidence, confirmed_at, created_at, updated_at
         ) VALUES (
           @villageId, @itemId, @instanceNumber, @level, @targetLevel,
-          @upgradeStartedAt, @upgradeEndsAt, @builderId,
+          @upgradeStartedAt, @upgradeEndsAt, @builderId, @builderAssignment,
+          @upgradeObservedTimer, @upgradeObservedAt,
           @source, @confidence, @confirmedAt, @now, @now
         )`
       )
@@ -112,6 +122,9 @@ export class VillageItemRepository {
           upgrade_started_at = @upgradeStartedAt,
           upgrade_ends_at = @upgradeEndsAt,
           builder_id = @builderId,
+          builder_assignment = @builderAssignment,
+          upgrade_observed_timer = @upgradeObservedTimer,
+          upgrade_observed_at = @upgradeObservedAt,
           source = @source,
           confidence = @confidence,
           confirmed_at = @confirmedAt,
@@ -125,6 +138,14 @@ export class VillageItemRepository {
   delete(id: number): boolean {
     return this.db.prepare('DELETE FROM village_items WHERE id = ?').run(id).changes > 0
   }
+}
+
+function parseBuilderAssignment(value: string | null): BuilderAssignment | null {
+  if (value === null) return null
+  if (!(BUILDER_ASSIGNMENTS as readonly string[]).includes(value)) {
+    throw new Error(`Stored builder assignment "${value}" is invalid`)
+  }
+  return value as BuilderAssignment
 }
 
 export function createVillageItemRepository(db: Database.Database): VillageItemRepository {
@@ -142,6 +163,9 @@ function mapRow(row: VillageItemRow): VillageItemInstance {
     upgradeStartedAt: dateOrNull(row.upgrade_started_at),
     upgradeEndsAt: dateOrNull(row.upgrade_ends_at),
     builderId: row.builder_id,
+    builderAssignment: parseBuilderAssignment(row.builder_assignment),
+    upgradeObservedTimer: row.upgrade_observed_timer,
+    upgradeObservedAt: dateOrNull(row.upgrade_observed_at),
     source: parseStateSource(row.source),
     confidence: row.confidence,
     confirmedAt: dateOrNull(row.confirmed_at),

@@ -79,7 +79,7 @@ describe('migrations', () => {
   describe('v2 -> v3', () => {
     beforeEach(() => {
       seedVersion2(db)
-      runMigrations(db)
+      runMigrations(db, { upTo: 3 })
     })
 
     it('reaches version 3 with foreign keys intact', () => {
@@ -154,7 +154,7 @@ describe('migrations', () => {
   describe('v3 constraints', () => {
     const now = T0
     beforeEach(() => {
-      runMigrations(db)
+      runMigrations(db, { upTo: 3 })
       db.prepare(
         `INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?), (2, 9, ?, ?)`
       ).run(now, now, now, now)
@@ -222,6 +222,170 @@ describe('migrations', () => {
            VALUES (1, ?, 'manual', '0.1.1', 1, 'not json', ?)`
         ).run(now, now)
       ).toThrow(/CHECK/)
+    })
+  })
+
+  describe('v3 -> v4', () => {
+    const now = T0
+
+    function seedVersion3(): void {
+      runMigrations(db, { upTo: 3 })
+      db.prepare(
+        `INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`
+      ).run(now, now)
+      db.prepare(
+        `INSERT INTO builders (id, village_id, slot, source, confidence, created_at, updated_at)
+         VALUES (1, 1, 1, 'manual', 1, ?, ?), (2, 1, 2, 'manual', 1, ?, ?)`
+      ).run(now, now, now, now)
+      db.prepare(
+        `INSERT INTO village_items (village_id, item_id, instance_number, level, target_level, builder_id,
+           upgrade_ends_at, source, confidence, confirmed_at, created_at, updated_at)
+         VALUES (1, 'cannon', 1, 3, 4, 1, '2026-09-15T00:00:00.000Z', 'manual', 1, ?, ?, ?),
+                (1, 'cannon', 2, 5, 6, 2, NULL, 'timer-estimate', 0.5, NULL, ?, ?),
+                (1, 'mortar', 1, 2, NULL, NULL, NULL, 'manual', 1, ?, ?, ?)`
+      ).run(now, now, now, now, now, now, now, now)
+    }
+
+    it('keeps every item and derives builder assignments', () => {
+      seedVersion3()
+      runMigrations(db)
+      expect(readAppliedVersion(db)).toBe(4)
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(
+        db
+          .prepare(
+            `SELECT item_id, instance_number, level, target_level, builder_id, builder_assignment,
+               upgrade_ends_at, upgrade_observed_timer
+             FROM village_items ORDER BY item_id, instance_number`
+          )
+          .all()
+      ).toEqual([
+        {
+          item_id: 'cannon', instance_number: 1, level: 3, target_level: 4, builder_id: 1,
+          builder_assignment: 'confirmed', upgrade_ends_at: '2026-09-15T00:00:00.000Z',
+          upgrade_observed_timer: null
+        },
+        {
+          item_id: 'cannon', instance_number: 2, level: 5, target_level: 6, builder_id: 2,
+          builder_assignment: 'assigned', upgrade_ends_at: null, upgrade_observed_timer: null
+        },
+        {
+          item_id: 'mortar', instance_number: 1, level: 2, target_level: null, builder_id: null,
+          builder_assignment: null, upgrade_ends_at: null, upgrade_observed_timer: null
+        }
+      ])
+    })
+
+    describe('v4 constraints', () => {
+      beforeEach(() => {
+        seedVersion3()
+        runMigrations(db)
+      })
+
+      function insert(values: Record<string, unknown>) {
+        const row = {
+          instance: 9,
+          level: 1,
+          target: 2,
+          builder: null,
+          assignment: 'unknown',
+          source: 'data-export',
+          timer: 600,
+          observedAt: now,
+          ...values
+        }
+        return db
+          .prepare(
+            `INSERT INTO village_items (village_id, item_id, instance_number, level, target_level, builder_id,
+               builder_assignment, upgrade_observed_timer, upgrade_observed_at, source, confidence,
+               created_at, updated_at)
+             VALUES (1, 'trap', @instance, @level, @target, @builder, @assignment, @timer, @observedAt,
+               @source, 0.9, @now, @now)`
+          )
+          .run({ ...row, now })
+      }
+
+      it('allows an unknown builder only for imported sources', () => {
+        expect(() => insert({})).not.toThrow()
+        expect(() => insert({ instance: 10, source: 'screenshot' })).not.toThrow()
+        expect(() => insert({ instance: 11, source: 'manual' })).toThrow(/CHECK/)
+        expect(() => insert({ instance: 12, source: 'timer-estimate' })).toThrow(/CHECK/)
+      })
+
+      it('ties unknown to a missing builder and manual upgrades to confirmed builders', () => {
+        expect(() => insert({ instance: 13, builder: 2 })).toThrow(/CHECK/)
+        expect(() => insert({ instance: 14, assignment: 'assigned' })).toThrow(/CHECK/)
+        expect(() => insert({ instance: 15, assignment: null })).toThrow(/CHECK/)
+        db.prepare('DELETE FROM village_items WHERE builder_id = 2').run()
+        const manual = { source: 'manual', builder: 2, timer: null, observedAt: null }
+        expect(() => insert({ ...manual, instance: 16, assignment: 'assigned' })).toThrow(/CHECK/)
+        expect(() => insert({ ...manual, instance: 17, assignment: 'confirmed' })).not.toThrow()
+      })
+
+      it('keeps observed timers paired and only on upgrades', () => {
+        expect(() => insert({ instance: 18, observedAt: null })).toThrow(/CHECK/)
+        expect(() => insert({ instance: 19, target: null, assignment: null })).toThrow(/CHECK/)
+      })
+
+      function createImport(hashChar: string): number {
+        return Number(
+          db
+            .prepare(
+              `INSERT INTO export_imports (village_id, export_timestamp, content_sha256, data_version,
+                 semantics_version, status, previewed_at, state_fingerprint, summary, created_at)
+               VALUES (1, 1794481225, ?, '0.1.1', '0.1.0', 'previewed', ?, 'fp', '{}', ?)`
+            )
+            .run(hashChar.repeat(64), now, now).lastInsertRowid
+        )
+      }
+
+      it('only lets imports move from previewed to applied or discarded', () => {
+        const id = createImport('a')
+        expect(() =>
+          db.prepare(`UPDATE export_imports SET summary = '{"x":1}' WHERE id = ?`).run(id)
+        ).toThrow(/previewed to applied/)
+        expect(() =>
+          db.prepare(`UPDATE export_imports SET status = 'applied', applied_at = ? WHERE id = ?`).run(now, id)
+        ).toThrow(/CHECK/)
+        db.prepare(
+          `UPDATE export_imports SET status = 'applied', applied_at = ?, apply_result = '{}' WHERE id = ?`
+        ).run(now, id)
+        expect(() =>
+          db.prepare(`UPDATE export_imports SET status = 'discarded', discarded_at = ? WHERE id = ?`).run(now, id)
+        ).toThrow(/previewed to applied/)
+        expect(db.prepare('SELECT export_timestamp FROM export_imports WHERE id = ?').get(id)).toEqual({
+          export_timestamp: 1794481225
+        })
+      })
+
+      it('keeps observations immutable and internally consistent', () => {
+        const importId = createImport('b')
+        const add = db.prepare(
+          `INSERT INTO export_observations (import_id, section, position, data_id, level, count, timer,
+             mapped_item_id, classification, timer_disposition, created_at)
+           VALUES (@importId, 'traps', @position, 12000000, 6, NULL, @timer, @mapped, @classification,
+             @disposition, @now)`
+        )
+        const base = {
+          importId,
+          now,
+          timer: 4601,
+          mapped: null,
+          classification: 'unmapped',
+          disposition: 'ignored-unverified'
+        }
+        add.run({ ...base, position: 0 })
+        expect(() => add.run({ ...base, position: 1, disposition: null })).toThrow(/CHECK/)
+        expect(() => add.run({ ...base, position: 2, classification: 'mapped' })).toThrow(/CHECK/)
+        expect(() => add.run({ ...base, position: 0 })).toThrow(/UNIQUE/)
+        expect(() => db.prepare('UPDATE export_observations SET level = 7').run()).toThrow(
+          /export observations are immutable/
+        )
+        expect(db.prepare('SELECT count, timer FROM export_observations').get()).toEqual({
+          count: null,
+          timer: 4601
+        })
+      })
     })
   })
 })

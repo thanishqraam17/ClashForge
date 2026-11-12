@@ -47,6 +47,19 @@ export function validateProvenance(input: Provenance): void {
   }
 }
 
+/** Sources that come from game data rather than a person typing values in. */
+export const IMPORTED_SOURCES: readonly StateSource[] = ['data-export', 'screenshot', 'live-capture']
+
+/**
+ * How sure we are which builder is doing an upgrade:
+ * - `confirmed`: a person entered or confirmed the builder.
+ * - `assigned`:  a builder is recorded but nobody has confirmed it.
+ * - `unknown`:   no builder is recorded (imported data only; the export
+ *                never says which builder is busy).
+ */
+export const BUILDER_ASSIGNMENTS = ['confirmed', 'assigned', 'unknown'] as const
+export type BuilderAssignment = (typeof BUILDER_ASSIGNMENTS)[number]
+
 /** Provenance for a value a person entered or confirmed by hand. */
 export function manualProvenance(now: Date = new Date()): Provenance {
   return { source: 'manual', confidence: 1, confirmedAt: now }
@@ -106,8 +119,14 @@ export type VillageItemInstance = Provenance & {
   upgradeStartedAt: Date | null
   /** Expected completion; null when the timer is unknown. */
   upgradeEndsAt: Date | null
-  /** Builder working on the upgrade; required while upgrading. */
+  /** Builder working on the upgrade; null when idle or when the builder is unknown. */
   builderId: number | null
+  /** Set exactly when upgrading. */
+  builderAssignment: BuilderAssignment | null
+  /** Raw imported timer (seconds, as exported); null unless the upgrade came from an export. */
+  upgradeObservedTimer: number | null
+  /** Export time the timer was observed at; set together with upgradeObservedTimer. */
+  upgradeObservedAt: Date | null
   createdAt: Date
   updatedAt: Date
 }
@@ -133,13 +152,57 @@ export function validateVillageItemInput(input: VillageItemPersistInput): void {
     input.upgradeStartedAt,
     input.upgradeEndsAt
   )
-  if (input.targetLevel !== null && input.builderId === null) {
+  validateProvenance(input)
+  validateBuilderAssignment(input)
+}
+
+function validateBuilderAssignment(input: VillageItemPersistInput): void {
+  const observed = input.upgradeObservedTimer !== null || input.upgradeObservedAt !== null
+  if (input.targetLevel === null) {
+    if (input.builderId !== null) {
+      throw new VillageStateValidationError('only an active upgrade can have a builder')
+    }
+    if (input.builderAssignment !== null) {
+      throw new VillageStateValidationError('only an active upgrade can have a builder assignment')
+    }
+    if (observed) {
+      throw new VillageStateValidationError('only an active upgrade can have an observed timer')
+    }
+    return
+  }
+
+  if (input.builderAssignment === null) {
+    throw new VillageStateValidationError('an active upgrade must state its builder assignment')
+  }
+  if (!(BUILDER_ASSIGNMENTS as readonly string[]).includes(input.builderAssignment)) {
+    throw new VillageStateValidationError('builderAssignment is invalid')
+  }
+  if (input.builderAssignment === 'unknown') {
+    if (input.builderId !== null) {
+      throw new VillageStateValidationError('an unknown builder assignment cannot name a builder')
+    }
+    if (!IMPORTED_SOURCES.includes(input.source)) {
+      throw new VillageStateValidationError('only imported data may leave the builder unknown')
+    }
+  } else if (input.builderId === null) {
     throw new VillageStateValidationError('an active upgrade must be assigned to a builder')
   }
-  if (input.targetLevel === null && input.builderId !== null) {
-    throw new VillageStateValidationError('only an active upgrade can have a builder')
+  if (input.source === 'manual' && input.builderAssignment !== 'confirmed') {
+    throw new VillageStateValidationError('a manual upgrade must have a confirmed builder')
   }
-  validateProvenance(input)
+
+  if ((input.upgradeObservedTimer === null) !== (input.upgradeObservedAt === null)) {
+    throw new VillageStateValidationError('an observed timer needs its observation time, and vice versa')
+  }
+  if (
+    input.upgradeObservedTimer !== null &&
+    (!Number.isInteger(input.upgradeObservedTimer) || input.upgradeObservedTimer < 0)
+  ) {
+    throw new VillageStateValidationError('upgradeObservedTimer must be a non-negative integer')
+  }
+  if (input.upgradeObservedAt !== null && Number.isNaN(input.upgradeObservedAt.getTime())) {
+    throw new VillageStateValidationError('upgradeObservedAt is invalid')
+  }
 }
 
 // ---------------------------------------------------------------------------

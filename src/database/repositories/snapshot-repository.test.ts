@@ -25,6 +25,9 @@ describe('SnapshotRepository', () => {
       upgradeStartedAt: new Date('2026-11-12T08:00:00.000Z'),
       upgradeEndsAt: null,
       builderId: b2.id,
+      builderAssignment: 'assigned',
+      upgradeObservedTimer: null,
+      upgradeObservedAt: null,
       source: 'timer-estimate',
       confidence: 0.6,
       confirmedAt: null
@@ -90,7 +93,8 @@ describe('SnapshotRepository', () => {
       level: 4,
       targetLevel: null,
       upgradeStartedAt: null,
-      builderId: null
+      builderId: null,
+      builderAssignment: null
     })
     const second = capture('2026-11-13T12:00:00.000Z')
 

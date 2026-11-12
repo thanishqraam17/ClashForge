@@ -22,6 +22,9 @@ function item(overrides: Partial<VillageItemPersistInput> = {}): VillageItemPers
     upgradeStartedAt: null,
     upgradeEndsAt: null,
     builderId: null,
+    builderAssignment: null,
+    upgradeObservedTimer: null,
+    upgradeObservedAt: null,
     ...confirmed,
     ...overrides
   }
@@ -76,10 +79,10 @@ describe('validateVillageItemInput', () => {
     expect(() => validateVillageItemInput(item())).not.toThrow()
     expect(() =>
       validateVillageItemInput(
-        item({ targetLevel: 4, builderId: 2, upgradeStartedAt: start, upgradeEndsAt: end })
+        item({ targetLevel: 4, builderId: 2, builderAssignment: 'confirmed', upgradeStartedAt: start, upgradeEndsAt: end })
       )
     ).not.toThrow()
-    expect(() => validateVillageItemInput(item({ targetLevel: 4, builderId: 2 }))).not.toThrow()
+    expect(() => validateVillageItemInput(item({ targetLevel: 4, builderId: 2, builderAssignment: 'confirmed' }))).not.toThrow()
   })
 
   it('rejects malformed ids, levels and instance numbers', () => {
@@ -95,12 +98,15 @@ describe('validateVillageItemInput', () => {
   })
 
   it('enforces one-level upgrades with an assigned builder', () => {
-    expect(message(() => validateVillageItemInput(item({ targetLevel: 5, builderId: 1 })))).toBe(
+    expect(message(() => validateVillageItemInput(item({ targetLevel: 5, builderId: 1, builderAssignment: 'confirmed' })))).toBe(
       'targetLevel must be exactly one above level'
     )
     expect(message(() => validateVillageItemInput(item({ targetLevel: 4 })))).toBe(
-      'an active upgrade must be assigned to a builder'
+      'an active upgrade must state its builder assignment'
     )
+    expect(
+      message(() => validateVillageItemInput(item({ targetLevel: 4, builderAssignment: 'confirmed' })))
+    ).toBe('an active upgrade must be assigned to a builder')
     expect(message(() => validateVillageItemInput(item({ builderId: 1 })))).toBe(
       'only an active upgrade can have a builder'
     )
@@ -110,10 +116,77 @@ describe('validateVillageItemInput', () => {
     expect(
       message(() =>
         validateVillageItemInput(
-          item({ targetLevel: 4, builderId: 1, upgradeStartedAt: end, upgradeEndsAt: start })
+          item({ targetLevel: 4, builderId: 1, builderAssignment: 'confirmed', upgradeStartedAt: end, upgradeEndsAt: start })
         )
       )
     ).toBe('upgrade end cannot be before its start')
+  })
+})
+
+describe('builder assignment rules', () => {
+  const imported = { source: 'data-export' as const, confidence: 0.95, confirmedAt: null }
+  const observedAt = new Date('2026-11-12T11:00:25.000Z')
+
+  it('allows an unknown builder only for imported upgrades', () => {
+    expect(() =>
+      validateVillageItemInput(
+        item({
+          ...imported,
+          targetLevel: 4,
+          builderAssignment: 'unknown',
+          upgradeObservedTimer: 600,
+          upgradeObservedAt: observedAt
+        })
+      )
+    ).not.toThrow()
+    expect(
+      message(() => validateVillageItemInput(item({ targetLevel: 4, builderAssignment: 'unknown' })))
+    ).toBe('only imported data may leave the builder unknown')
+    expect(
+      message(() =>
+        validateVillageItemInput(
+          item({ source: 'timer-estimate', confirmedAt: null, targetLevel: 4, builderAssignment: 'unknown' })
+        )
+      )
+    ).toBe('only imported data may leave the builder unknown')
+    expect(
+      message(() =>
+        validateVillageItemInput(
+          item({ ...imported, targetLevel: 4, builderId: 1, builderAssignment: 'unknown' })
+        )
+      )
+    ).toBe('an unknown builder assignment cannot name a builder')
+  })
+
+  it('requires manual upgrades to have a confirmed builder', () => {
+    expect(
+      message(() =>
+        validateVillageItemInput(item({ targetLevel: 4, builderId: 1, builderAssignment: 'assigned' }))
+      )
+    ).toBe('a manual upgrade must have a confirmed builder')
+    expect(() =>
+      validateVillageItemInput(
+        item({ ...imported, targetLevel: 4, builderId: 1, builderAssignment: 'assigned' })
+      )
+    ).not.toThrow()
+  })
+
+  it('keeps observed timers paired and only on upgrades', () => {
+    expect(
+      message(() =>
+        validateVillageItemInput(
+          item({ ...imported, targetLevel: 4, builderAssignment: 'unknown', upgradeObservedTimer: 600 })
+        )
+      )
+    ).toBe('an observed timer needs its observation time, and vice versa')
+    expect(message(() => validateVillageItemInput(item({ builderAssignment: 'confirmed' })))).toBe(
+      'only an active upgrade can have a builder assignment'
+    )
+    expect(
+      message(() =>
+        validateVillageItemInput(item({ upgradeObservedTimer: 5, upgradeObservedAt: observedAt }))
+      )
+    ).toBe('only an active upgrade can have an observed timer')
   })
 })
 

@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import migration001 from '../migrations/001_initial.sql?raw'
 import migration002 from '../migrations/002_upgrade_history_nullable_completed_at.sql?raw'
 import migration003 from '../migrations/003_village_state.sql?raw'
+import migration004 from '../migrations/004_imports_and_builder_assignment.sql?raw'
 
 /**
  * Timestamps: ISO 8601 UTC strings (e.g. 2026-09-14T10:30:00.000Z), stored as TEXT.
@@ -11,7 +12,8 @@ import migration003 from '../migrations/003_village_state.sql?raw'
 const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   { version: 1, sql: migration001 },
   { version: 2, sql: migration002 },
-  { version: 3, sql: migration003 }
+  { version: 3, sql: migration003 },
+  { version: 4, sql: migration004 }
 ]
 
 export function readAppliedVersion(db: Database.Database): number {

@@ -97,6 +97,9 @@ describe('reconcileLegacyRecords', () => {
         upgradeStartedAt: null,
         upgradeEndsAt: null,
         builderId: null,
+        builderAssignment: null,
+        upgradeObservedTimer: null,
+        upgradeObservedAt: null,
         ...TEST_CONFIRMED
       })
     }
