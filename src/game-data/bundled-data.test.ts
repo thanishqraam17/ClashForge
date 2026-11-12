@@ -7,3 +7,11 @@ describe('bundled game data', () => {
   })
 
 })
+
+describe('sample catalogue fixture', () => {
+  it('is itself a valid catalogue', async () => {
+    const { SAMPLE_ITEMS, SAMPLE_MANIFEST } = await import('./fixtures/sample-catalogue')
+    const { validateGameCatalogue } = await import('../domain/catalogue-validation')
+    expect(validateGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS).ok).toBe(true)
+  })
+})
