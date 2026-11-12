@@ -15,6 +15,8 @@ import type {
   ItemCategory,
   ValidationStatus
 } from '../../domain/catalogue'
+import type { ItemAtTownHall } from '../../domain/town-hall-rules'
+import type { TownHallComparison, TownHallSummary } from '../../services/town-hall-service'
 import {
   UPGRADE_HISTORY_ENTITY_TYPES,
   type UpgradeHistoryEntityType
@@ -33,7 +35,11 @@ export const IPC_CHANNELS = {
   historyRecord: 'history:record',
   catalogueGetItems: 'catalogue:get-items',
   catalogueGetItem: 'catalogue:get-item',
-  catalogueGetDatasetInfo: 'catalogue:get-dataset-info'
+  catalogueGetDatasetInfo: 'catalogue:get-dataset-info',
+  townHallGetMax: 'town-hall:get-max',
+  townHallGetItem: 'town-hall:get-item',
+  townHallGetSummary: 'town-hall:get-summary',
+  townHallCompare: 'town-hall:compare'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -131,6 +137,13 @@ export type DatasetInfoDto = {
   ageInDays: number
 }
 
+/** Plain data already; re-exported under DTO names for the renderer. */
+export type ItemAtTownHallDto = ItemAtTownHall
+export type TownHallSummaryDto = TownHallSummary
+export type TownHallComparisonDto = TownHallComparison
+/** Highest Town Hall with data per game mode; null when not yet known. */
+export type MaxTownHallDto = Record<GameMode, number | null>
+
 // ---------------------------------------------------------------------------
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
@@ -209,6 +222,22 @@ export type CatalogueGetItemInput = {
   id: string
 }
 
+export type TownHallGetItemInput = {
+  itemId: string
+  townHall: number
+}
+
+export type TownHallGetSummaryInput = {
+  townHall: number
+  gameMode?: GameMode
+}
+
+export type TownHallCompareInput = {
+  fromTownHall: number
+  toTownHall: number
+  gameMode?: GameMode
+}
+
 // ---------------------------------------------------------------------------
 // Results and errors
 // ---------------------------------------------------------------------------
@@ -251,6 +280,10 @@ export type IpcContract = {
   }
   'catalogue:get-item': { request: CatalogueGetItemInput; response: CatalogueItemDto | null }
   'catalogue:get-dataset-info': { request: void; response: DatasetInfoDto }
+  'town-hall:get-max': { request: void; response: MaxTownHallDto }
+  'town-hall:get-item': { request: TownHallGetItemInput; response: ItemAtTownHallDto | null }
+  'town-hall:get-summary': { request: TownHallGetSummaryInput; response: TownHallSummaryDto }
+  'town-hall:compare': { request: TownHallCompareInput; response: TownHallComparisonDto }
 }
 
 export type IpcRequest<C extends IpcChannel> = IpcContract[C]['request']
@@ -286,5 +319,11 @@ export type ClashForgeApi = {
     getItems: (input?: CatalogueGetItemsInput) => Promise<IpcResult<CatalogueItemDto[]>>
     getItem: (input: CatalogueGetItemInput) => Promise<IpcResult<CatalogueItemDto | null>>
     getDatasetInfo: () => Promise<IpcResult<DatasetInfoDto>>
+  }
+  townHall: {
+    getMax: () => Promise<IpcResult<MaxTownHallDto>>
+    getItem: (input: TownHallGetItemInput) => Promise<IpcResult<ItemAtTownHallDto | null>>
+    getSummary: (input: TownHallGetSummaryInput) => Promise<IpcResult<TownHallSummaryDto>>
+    compare: (input: TownHallCompareInput) => Promise<IpcResult<TownHallComparisonDto>>
   }
 }

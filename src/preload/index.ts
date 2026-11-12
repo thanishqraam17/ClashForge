@@ -41,6 +41,12 @@ const api: ClashForgeApi = {
     getItems: (input) => invoke(IPC_CHANNELS.catalogueGetItems, input),
     getItem: (input) => invoke(IPC_CHANNELS.catalogueGetItem, input),
     getDatasetInfo: () => invoke(IPC_CHANNELS.catalogueGetDatasetInfo)
+  },
+  townHall: {
+    getMax: () => invoke(IPC_CHANNELS.townHallGetMax),
+    getItem: (input) => invoke(IPC_CHANNELS.townHallGetItem, input),
+    getSummary: (input) => invoke(IPC_CHANNELS.townHallGetSummary, input),
+    compare: (input) => invoke(IPC_CHANNELS.townHallCompare, input)
   }
 }
 

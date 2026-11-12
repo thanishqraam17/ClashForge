@@ -10,10 +10,18 @@ import {
 } from '../../shared/ipc/contracts'
 import { parseGameCatalogue } from '../../domain/catalogue-validation'
 import { SAMPLE_ITEMS, SAMPLE_MANIFEST } from '../../game-data/fixtures/sample-catalogue'
+import { parseTownHallRules } from '../../domain/town-hall-rules-validation'
+import { SAMPLE_TOWN_HALL_RULES } from '../../game-data/fixtures/sample-town-hall-rules'
 import { createCatalogueService } from '../../services/catalogue-service'
+import { createTownHallService } from '../../services/town-hall-service'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
 
-const catalogue = createCatalogueService(parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS))
+const sampleCatalogue = parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS)
+const catalogue = createCatalogueService(sampleCatalogue)
+const townHall = createTownHallService(
+  sampleCatalogue,
+  parseTownHallRules(SAMPLE_TOWN_HALL_RULES, sampleCatalogue)
+)
 
 const villageInput: VillageSaveInput = {
   townHallLevel: 9,
@@ -45,7 +53,7 @@ describe('IPC handlers', () => {
     dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
     database = createDatabase({ dbPath: join(dir, 'test.db') })
     logger.error.mockReset()
-    handlers = createIpcHandlers({ database, catalogue, logger })
+    handlers = createIpcHandlers({ database, catalogue, townHall, logger })
   })
 
   afterEach(() => {
@@ -271,6 +279,52 @@ describe('IPC handlers', () => {
     }
     const badId = handlers['catalogue:get-item']({ id: '../../etc' })
     expect(badId.ok ? 'ok' : badId.error.code).toBe('VALIDATION_ERROR')
+  })
+
+  it('serves Town Hall rules, summaries and comparisons', () => {
+    expect(expectOk(handlers['town-hall:get-max'](undefined))).toEqual({
+      'home-village': 8,
+      'builder-base': 3
+    })
+    expect(
+      expectOk(handlers['town-hall:get-item']({ itemId: 'test-cannon', townHall: 5 }))
+    ).toMatchObject({ available: true, maxLevel: 6, maxQuantity: 3 })
+    expect(
+      expectOk(handlers['town-hall:get-item']({ itemId: 'unknown-item', townHall: 5 }))
+    ).toBeNull()
+
+    const summary = expectOk(handlers['town-hall:get-summary']({ townHall: 7 }))
+    expect(summary.available.find((entry) => entry.itemId === 'test-knight')?.isNewlyUnlocked).toBe(
+      true
+    )
+    const bb = expectOk(
+      handlers['town-hall:get-summary']({ townHall: 1, gameMode: 'builder-base' })
+    )
+    expect(bb.available).toHaveLength(1)
+
+    const comparison = expectOk(
+      handlers['town-hall:compare']({ fromTownHall: 6, toTownHall: 7 })
+    )
+    expect(comparison.newlyUnlocked.map((entry) => entry.itemId)).toEqual(['test-knight'])
+  })
+
+  it('rejects invalid Town Hall requests with VALIDATION_ERROR', () => {
+    const cases: Array<[keyof IpcHandlerMap, unknown]> = [
+      ['town-hall:get-item', { itemId: 'test-cannon', townHall: 9 }],
+      ['town-hall:get-item', { itemId: 'test-cannon', townHall: 0 }],
+      ['town-hall:get-item', { itemId: 'Bad Id', townHall: 1 }],
+      ['town-hall:get-summary', { townHall: 2.5 }],
+      ['town-hall:get-summary', { townHall: 1, gameMode: 'clan-capital' }],
+      ['town-hall:compare', { fromTownHall: 5, toTownHall: 3 }],
+      ['town-hall:compare', { fromTownHall: 1 }],
+      ['town-hall:get-max', { townHall: 1 }]
+    ]
+    for (const [channel, payload] of cases) {
+      const result = handlers[channel](payload)
+      expect(result.ok ? 'ok' : result.error.code, `${channel} ${JSON.stringify(payload)}`).toBe(
+        'VALIDATION_ERROR'
+      )
+    }
   })
 
   it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {

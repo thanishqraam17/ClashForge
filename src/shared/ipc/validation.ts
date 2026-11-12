@@ -3,6 +3,9 @@ import {
   HISTORY_RECENT_MAX_LIMIT,
   type CatalogueGetItemInput,
   type CatalogueGetItemsInput,
+  type TownHallCompareInput,
+  type TownHallGetItemInput,
+  type TownHallGetSummaryInput,
   UPGRADE_HISTORY_ENTITY_TYPES,
   type BuildingSaveInput,
   type HeroSaveInput,
@@ -315,6 +318,47 @@ export function parseCatalogueGetItemInput(value: unknown): CatalogueGetItemInpu
     throw new IpcInputError('id must be a valid catalogue item id')
   }
   return { id }
+}
+
+function optionalGameMode(fields: Fields): { gameMode?: (typeof GAME_MODES)[number] } {
+  const mode = fields['gameMode']
+  if (mode === undefined) return {}
+  if (typeof mode !== 'string' || !(GAME_MODES as readonly string[]).includes(mode)) {
+    throw new IpcInputError(`gameMode must be one of: ${GAME_MODES.join(', ')}`)
+  }
+  return { gameMode: mode as (typeof GAME_MODES)[number] }
+}
+
+/** Range against real data is checked by the Town Hall service; this checks shape. */
+function townHallLevel(fields: Fields, key: string): number {
+  const level = positiveInt(fields, key)
+  if (level > MAX_TOWN_HALL_FILTER) {
+    throw new IpcInputError(`${key} must be at most ${MAX_TOWN_HALL_FILTER}`)
+  }
+  return level
+}
+
+export function parseTownHallGetItemInput(value: unknown): TownHallGetItemInput {
+  const f = asObject(value, ['itemId', 'townHall'], 'town hall item query')
+  const itemId = f['itemId']
+  if (typeof itemId !== 'string' || !isValidItemId(itemId)) {
+    throw new IpcInputError('itemId must be a valid catalogue item id')
+  }
+  return { itemId, townHall: townHallLevel(f, 'townHall') }
+}
+
+export function parseTownHallGetSummaryInput(value: unknown): TownHallGetSummaryInput {
+  const f = asObject(value, ['townHall', 'gameMode'], 'town hall summary query')
+  return { townHall: townHallLevel(f, 'townHall'), ...optionalGameMode(f) }
+}
+
+export function parseTownHallCompareInput(value: unknown): TownHallCompareInput {
+  const f = asObject(value, ['fromTownHall', 'toTownHall', 'gameMode'], 'town hall comparison')
+  return {
+    fromTownHall: townHallLevel(f, 'fromTownHall'),
+    toTownHall: townHallLevel(f, 'toTownHall'),
+    ...optionalGameMode(f)
+  }
 }
 
 /** For channels that take no payload: reject anything other than undefined/null. */

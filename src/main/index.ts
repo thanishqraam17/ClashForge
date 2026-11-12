@@ -4,6 +4,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { loadBundledGameData } from '../game-data'
 import { createCatalogueService } from '../services/catalogue-service'
+import { createTownHallService } from '../services/town-hall-service'
 import { createIpcHandlers } from './ipc/handlers'
 import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
 
@@ -56,7 +57,8 @@ app.whenReady().then(() => {
     ipcMain,
     createIpcHandlers({
       database: appDatabase,
-      catalogue: createCatalogueService(gameData.catalogue)
+      catalogue: createCatalogueService(gameData.catalogue),
+      townHall: createTownHallService(gameData.catalogue, gameData.townHallRules)
     }),
     createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
   )

@@ -1,5 +1,6 @@
 import type { ClashForgeDatabase } from '../../database/client/database'
 import type { CatalogueService } from '../../services/catalogue-service'
+import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
 import { BuildingValidationError } from '../../domain/building'
 import { HeroValidationError } from '../../domain/hero'
 import { ResearchValidationError } from '../../domain/research'
@@ -22,6 +23,9 @@ import {
   parseHistoryGetRecentInput,
   parseHistoryRecordInput,
   parseResearchSaveInput,
+  parseTownHallCompareInput,
+  parseTownHallGetItemInput,
+  parseTownHallGetSummaryInput,
   parseVillageSaveInput
 } from '../../shared/ipc/validation'
 import {
@@ -56,7 +60,8 @@ const DOMAIN_VALIDATION_ERRORS = [
   BuildingValidationError,
   HeroValidationError,
   ResearchValidationError,
-  UpgradeHistoryValidationError
+  UpgradeHistoryValidationError,
+  TownHallRangeError
 ]
 
 function toDate(value: string): Date {
@@ -105,12 +110,14 @@ function wrap<C extends IpcChannel>(
 export type IpcHandlerDependencies = {
   database: ClashForgeDatabase
   catalogue: CatalogueService
+  townHall: TownHallService
   logger?: IpcLogger
 }
 
 export function createIpcHandlers({
   database,
   catalogue,
+  townHall,
   logger = console
 }: IpcHandlerDependencies): IpcHandlerMap {
   function requireVillage(): void {
@@ -245,6 +252,29 @@ export function createIpcHandlers({
     'catalogue:get-dataset-info': wrap('catalogue:get-dataset-info', logger, (payload) => {
       parseEmptyInput(payload)
       return catalogue.getDatasetInfo()
+    }),
+
+    'town-hall:get-max': wrap('town-hall:get-max', logger, (payload) => {
+      parseEmptyInput(payload)
+      return {
+        'home-village': townHall.getMaxTownHall('home-village'),
+        'builder-base': townHall.getMaxTownHall('builder-base')
+      }
+    }),
+
+    'town-hall:get-item': wrap('town-hall:get-item', logger, (payload) => {
+      const input = parseTownHallGetItemInput(payload)
+      return townHall.getItemAt(input.itemId, input.townHall)
+    }),
+
+    'town-hall:get-summary': wrap('town-hall:get-summary', logger, (payload) => {
+      const input = parseTownHallGetSummaryInput(payload)
+      return townHall.getSummary(input.townHall, input.gameMode)
+    }),
+
+    'town-hall:compare': wrap('town-hall:compare', logger, (payload) => {
+      const input = parseTownHallCompareInput(payload)
+      return townHall.compare(input.fromTownHall, input.toTownHall, input.gameMode)
     })
   }
 }
