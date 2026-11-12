@@ -11,6 +11,10 @@ import {
 } from '../repositories/village-item-repository'
 import { createVillageRepository, type VillageRepository } from '../repositories/village-repository'
 import { runMigrations } from '../schema/migrate'
+import {
+  createResearchStateRepository,
+  type ResearchStateRepository
+} from '../repositories/research-state-repository'
 import { createBuilderRepository, type BuilderRepository } from '../repositories/builder-repository'
 
 export type CreateDatabaseOptions = {
@@ -22,6 +26,7 @@ export type ClashForgeDatabase = {
   readonly villages: VillageRepository
   readonly villageItems: VillageItemRepository
   readonly builders: BuilderRepository
+  readonly researchStates: ResearchStateRepository
   readonly upgradeHistory: UpgradeHistoryRepository
   healthCheck: () => void
   close: () => void
@@ -41,6 +46,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
   const villages = createVillageRepository(db)
   const villageItems = createVillageItemRepository(db)
   const builders = createBuilderRepository(db)
+  const researchStates = createResearchStateRepository(db)
   const upgradeHistory = createUpgradeHistoryRepository(db)
 
   return {
@@ -48,6 +54,7 @@ export function createDatabase(options: CreateDatabaseOptions): ClashForgeDataba
     villages,
     villageItems,
     builders,
+    researchStates,
     upgradeHistory,
     healthCheck(): void {
       db.prepare('SELECT 1 AS ok').get()
