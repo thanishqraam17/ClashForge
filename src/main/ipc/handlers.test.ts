@@ -15,6 +15,7 @@ import { SAMPLE_TOWN_HALL_RULES } from '../../game-data/fixtures/sample-town-hal
 import { createAssetService } from '../../services/asset-service'
 import { createCatalogueService } from '../../services/catalogue-service'
 import { createTownHallService } from '../../services/town-hall-service'
+import { createVillageStateService } from '../../services/village-state-service'
 import { createIpcHandlers, type IpcHandlerMap } from './handlers'
 
 const sampleCatalogue = parseGameCatalogue(SAMPLE_MANIFEST, SAMPLE_ITEMS)
@@ -66,7 +67,14 @@ describe('IPC handlers', () => {
     dir = mkdtempSync(join(tmpdir(), 'clashforge-ipc-'))
     database = createDatabase({ dbPath: join(dir, 'test.db') })
     logger.error.mockReset()
-    handlers = createIpcHandlers({ database, catalogue, townHall, assets, logger })
+    handlers = createIpcHandlers({
+      database,
+      catalogue,
+      townHall,
+      assets,
+      villageState: createVillageStateService({ database, catalogue: sampleCatalogue, townHall }),
+      logger
+    })
   })
 
   afterEach(() => {
@@ -249,6 +257,102 @@ describe('IPC handlers', () => {
       const result = handlers['assets:resolve'](payload)
       expect(result.ok ? 'ok' : result.error.code).toBe('VALIDATION_ERROR')
     }
+  })
+
+  it('records village state end to end over IPC', () => {
+    expect(expectOk(handlers['village-state:get'](undefined))).toBeNull()
+    const notReady = handlers['builders:set-count']({ count: 2 })
+    expect(notReady.ok ? 'ok' : notReady.error.code).toBe('VILLAGE_NOT_INITIALISED')
+
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 6 }))
+    const [builder] = expectOk(handlers['builders:set-count']({ count: 2 }))
+    const cannon = expectOk(
+      handlers['village-items:save']({
+        itemId: 'test-cannon',
+        instanceNumber: 1,
+        level: 5,
+        targetLevel: 6,
+        upgradeStartedAt: '2026-11-12T08:00:00.000Z',
+        upgradeEndsAt: '2026-11-13T08:00:00.000Z',
+        builderId: builder!.id
+      })
+    )
+    expect(cannon).toMatchObject({ itemId: 'test-cannon', level: 5, source: 'manual', confidence: 1 })
+    expect(typeof cannon.confirmedAt).toBe('string')
+    expectOk(
+      handlers['research:save']({
+        itemId: 'test-heal-spell',
+        level: 1,
+        targetLevel: 2,
+        researchStartedAt: null,
+        researchEndsAt: null
+      })
+    )
+
+    const state = expectOk(handlers['village-state:get'](undefined))!
+    expect(state.builders.map((b) => b.assignedItemInstanceId)).toEqual([cannon.id, null])
+    expect(state.activeResearchItemId).toBe('test-heal-spell')
+    expect(state.coverage.canRecordItems).toBe(true)
+    expect(state.legacyRecords).toEqual({ pending: 0, converted: 0, dismissed: 0 })
+    expect(structuredClone(state)).toEqual(state)
+
+    const snapshot = expectOk(handlers['snapshots:capture'](undefined))
+    expect(snapshot.payload.items[0]).toMatchObject({ itemId: 'test-cannon', builderSlot: 1 })
+    expect(expectOk(handlers['snapshots:list']({ limit: 5 }))).toHaveLength(1)
+    expect(expectOk(handlers['snapshots:get']({ id: snapshot.id }))?.id).toBe(snapshot.id)
+    expect(expectOk(handlers['snapshots:get']({ id: 999 }))).toBeNull()
+
+    expect(expectOk(handlers['village-items:remove']({ id: cannon.id }))).toBeNull()
+    const missing = handlers['village-items:remove']({ id: cannon.id })
+    expect(missing.ok ? 'ok' : missing.error.code).toBe('NOT_FOUND')
+    expect(expectOk(handlers['legacy:list']({ status: 'pending' }))).toEqual([])
+  })
+
+  it('rejects invalid village state requests', () => {
+    expectOk(handlers['village:save']({ ...villageInput, townHallLevel: 6 }))
+    const cases: Array<[keyof IpcHandlerMap, unknown, string]> = [
+      ['village-items:save', { itemId: 'Cannon', instanceNumber: 1, level: 1, targetLevel: null, upgradeStartedAt: null, upgradeEndsAt: null, builderId: null }, 'VALIDATION_ERROR'],
+      ['village-items:save', { itemId: 'made-up', instanceNumber: 1, level: 1, targetLevel: null, upgradeStartedAt: null, upgradeEndsAt: null, builderId: null }, 'VALIDATION_ERROR'],
+      ['village-items:save', { itemId: 'test-cannon', instanceNumber: 1, level: 1 }, 'VALIDATION_ERROR'],
+      ['builders:set-count', { count: -1 }, 'VALIDATION_ERROR'],
+      ['builders:set-count', { count: 11 }, 'VALIDATION_ERROR'],
+      ['research:remove', { itemId: 'test-archer' }, 'NOT_FOUND'],
+      ['snapshots:list', { limit: 0 }, 'VALIDATION_ERROR'],
+      ['legacy:list', { status: 'gone' }, 'VALIDATION_ERROR']
+    ]
+    for (const [channel, payload, code] of cases) {
+      const result = handlers[channel](payload)
+      expect(result.ok ? 'ok' : result.error.code, `${channel} ${JSON.stringify(payload)}`).toBe(code)
+    }
+  })
+
+  it('reports CATALOGUE_INCOMPLETE when the catalogue cannot support a save', () => {
+    const empty = parseGameCatalogue(SAMPLE_MANIFEST, [])
+    const emptyTownHall = createTownHallService(
+      empty,
+      parseTownHallRules({ maxTownHall: { 'home-village': null, 'builder-base': null }, items: [] }, empty)
+    )
+    const emptyHandlers = createIpcHandlers({
+      database,
+      catalogue: createCatalogueService(empty),
+      townHall: emptyTownHall,
+      assets,
+      villageState: createVillageStateService({ database, catalogue: empty, townHall: emptyTownHall }),
+      logger
+    })
+    expectOk(emptyHandlers['village:save'](villageInput))
+    const result = emptyHandlers['village-items:save']({
+      itemId: 'test-cannon',
+      instanceNumber: 1,
+      level: 1,
+      targetLevel: null,
+      upgradeStartedAt: null,
+      upgradeEndsAt: null,
+      builderId: null
+    })
+    expect(result.ok ? 'ok' : result.error.code).toBe('CATALOGUE_INCOMPLETE')
+    expect(expectOk(emptyHandlers['village-state:get-coverage'](undefined)).canRecordItems).toBe(false)
+    expect(expectOk(emptyHandlers['builders:set-count']({ count: 3 }))).toHaveLength(3)
   })
 
   it('hides unexpected errors behind INTERNAL_ERROR and logs them locally', () => {

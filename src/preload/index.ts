@@ -39,6 +39,29 @@ const api: ClashForgeApi = {
   assets: {
     resolve: (input) => invoke(IPC_CHANNELS.assetsResolve, input),
     getAttributions: () => invoke(IPC_CHANNELS.assetsGetAttributions)
+  },
+  villageState: {
+    get: () => invoke(IPC_CHANNELS.villageStateGet),
+    getCoverage: () => invoke(IPC_CHANNELS.villageStateGetCoverage)
+  },
+  villageItems: {
+    save: (input) => invoke(IPC_CHANNELS.villageItemsSave, input),
+    remove: (input) => invoke(IPC_CHANNELS.villageItemsRemove, input)
+  },
+  builders: {
+    setCount: (input) => invoke(IPC_CHANNELS.buildersSetCount, input)
+  },
+  research: {
+    save: (input) => invoke(IPC_CHANNELS.researchSave, input),
+    remove: (input) => invoke(IPC_CHANNELS.researchRemove, input)
+  },
+  snapshots: {
+    capture: () => invoke(IPC_CHANNELS.snapshotsCapture),
+    list: (input) => invoke(IPC_CHANNELS.snapshotsList, input),
+    get: (input) => invoke(IPC_CHANNELS.snapshotsGet, input)
+  },
+  legacy: {
+    list: (input) => invoke(IPC_CHANNELS.legacyList, input)
   }
 }
 

@@ -7,7 +7,9 @@ import { createAssetService } from '../services/asset-service'
 import { createCatalogueService } from '../services/catalogue-service'
 import { createAssetFileStore } from './assets/asset-file-store'
 import { handleAssetProtocol, registerAssetSchemePrivileges } from './assets/asset-protocol'
+import { reconcileLegacyRecords } from '../services/legacy-reconciliation-service'
 import { createTownHallService } from '../services/town-hall-service'
+import { createVillageStateService } from '../services/village-state-service'
 import { createIpcHandlers } from './ipc/handlers'
 import { createAppSenderPolicy, registerIpcHandlers } from './ipc/register'
 
@@ -58,6 +60,29 @@ app.whenReady().then(() => {
 
   const gameData = loadBundledGameData()
   const assets = createAssetService(gameData.assets)
+  const townHall = createTownHallService(gameData.catalogue, gameData.townHallRules)
+  const villageState = createVillageStateService({
+    database: appDatabase,
+    catalogue: gameData.catalogue,
+    townHall
+  })
+
+  // Convert archived pre-Phase-5 records where the catalogue mapping is reliable.
+  // Never deletes anything; unconvertible records stay pending with a note.
+  try {
+    const report = reconcileLegacyRecords({
+      database: appDatabase,
+      catalogue: gameData.catalogue,
+      villageState
+    })
+    if (isDev && report.results.length > 0) {
+      console.info(
+        `[ClashForge] Legacy records: ${report.converted} converted, ${report.pending} pending`
+      )
+    }
+  } catch (error) {
+    console.error('[ClashForge] Legacy reconciliation failed; records left untouched', error)
+  }
   handleAssetProtocol(
     protocol,
     createAssetFileStore({
@@ -72,8 +97,9 @@ app.whenReady().then(() => {
     createIpcHandlers({
       database: appDatabase,
       catalogue: createCatalogueService(gameData.catalogue),
-      townHall: createTownHallService(gameData.catalogue, gameData.townHallRules),
-      assets
+      townHall,
+      assets,
+      villageState
     }),
     createAppSenderPolicy(isDev ? process.env['ELECTRON_RENDERER_URL'] : undefined)
   )

@@ -3,6 +3,13 @@ import {
   HISTORY_RECENT_MAX_LIMIT,
   type CatalogueGetItemInput,
   type AssetsResolveInput,
+  type BuildersSetCountInput,
+  type IdInput,
+  type LegacyListInput,
+  type ResearchRemoveInput,
+  type ResearchSaveInput,
+  type SnapshotsListInput,
+  type VillageItemSaveInput,
   type CatalogueGetItemsInput,
   type TownHallCompareInput,
   type TownHallGetItemInput,
@@ -291,6 +298,92 @@ export function parseAssetsResolveInput(value: unknown): AssetsResolveInput {
     throw new IpcInputError(`level must be at most ${MAX_ASSET_LEVEL}`)
   }
   return { itemId, level }
+}
+
+function itemIdField(fields: Fields, key = 'itemId'): string {
+  const value = fields[key]
+  if (typeof value !== 'string' || !isValidItemId(value)) {
+    throw new IpcInputError(`${key} must be a valid catalogue item id`)
+  }
+  return value
+}
+
+function nullablePositiveInt(fields: Fields, key: string): number | null {
+  return fields[key] === null ? null : positiveInt(fields, key)
+}
+
+export function parseVillageItemSaveInput(value: unknown): VillageItemSaveInput {
+  const f = asObject(
+    value,
+    ['id', 'itemId', 'instanceNumber', 'level', 'targetLevel', 'upgradeStartedAt', 'upgradeEndsAt', 'builderId'],
+    'village item'
+  )
+  const id = optionalPositiveInt(f, 'id')
+  return {
+    ...(id === undefined ? {} : { id }),
+    itemId: itemIdField(f),
+    instanceNumber: positiveInt(f, 'instanceNumber'),
+    level: positiveInt(f, 'level'),
+    targetLevel: nullablePositiveInt(f, 'targetLevel'),
+    upgradeStartedAt: nullableTimestamp(f, 'upgradeStartedAt'),
+    upgradeEndsAt: nullableTimestamp(f, 'upgradeEndsAt'),
+    builderId: nullablePositiveInt(f, 'builderId')
+  }
+}
+
+export function parseIdInput(value: unknown): IdInput {
+  const f = asObject(value, ['id'], 'request')
+  return { id: positiveInt(f, 'id') }
+}
+
+export function parseBuildersSetCountInput(value: unknown): BuildersSetCountInput {
+  const f = asObject(value, ['count'], 'builder count')
+  return { count: nonNegativeInt(f, 'count') }
+}
+
+export function parseResearchSaveInput(value: unknown): ResearchSaveInput {
+  const f = asObject(
+    value,
+    ['itemId', 'level', 'targetLevel', 'researchStartedAt', 'researchEndsAt'],
+    'research'
+  )
+  return {
+    itemId: itemIdField(f),
+    level: positiveInt(f, 'level'),
+    targetLevel: nullablePositiveInt(f, 'targetLevel'),
+    researchStartedAt: nullableTimestamp(f, 'researchStartedAt'),
+    researchEndsAt: nullableTimestamp(f, 'researchEndsAt')
+  }
+}
+
+export function parseResearchRemoveInput(value: unknown): ResearchRemoveInput {
+  const f = asObject(value, ['itemId'], 'research')
+  return { itemId: itemIdField(f) }
+}
+
+const SNAPSHOT_LIST_MAX = 200
+
+export function parseSnapshotsListInput(value: unknown): SnapshotsListInput {
+  if (value === undefined || value === null) return {}
+  const f = asObject(value, ['limit'], 'snapshot query')
+  const limit = optionalPositiveInt(f, 'limit')
+  if (limit !== undefined && limit > SNAPSHOT_LIST_MAX) {
+    throw new IpcInputError(`limit must be at most ${SNAPSHOT_LIST_MAX}`)
+  }
+  return limit === undefined ? {} : { limit }
+}
+
+const RECONCILIATION_STATUS_VALUES = ['pending', 'converted', 'dismissed'] as const
+
+export function parseLegacyListInput(value: unknown): LegacyListInput {
+  if (value === undefined || value === null) return {}
+  const f = asObject(value, ['status'], 'legacy query')
+  const status = f['status']
+  if (status === undefined) return {}
+  if (typeof status !== 'string' || !(RECONCILIATION_STATUS_VALUES as readonly string[]).includes(status)) {
+    throw new IpcInputError(`status must be one of: ${RECONCILIATION_STATUS_VALUES.join(', ')}`)
+  }
+  return { status: status as LegacyListInput['status'] }
 }
 
 /** For channels that take no payload: reject anything other than undefined/null. */

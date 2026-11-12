@@ -17,6 +17,10 @@ import type {
 } from '../../domain/catalogue'
 import type { ItemAtTownHall } from '../../domain/town-hall-rules'
 import type { StateSource } from '../../domain/village-state'
+import type {
+  LegacyKind,
+  ReconciliationStatus
+} from '../../database/repositories/legacy-record-repository'
 import type { TownHallComparison, TownHallSummary } from '../../services/town-hall-service'
 import {
   UPGRADE_HISTORY_ENTITY_TYPES,
@@ -36,7 +40,18 @@ export const IPC_CHANNELS = {
   townHallGetSummary: 'town-hall:get-summary',
   townHallCompare: 'town-hall:compare',
   assetsResolve: 'assets:resolve',
-  assetsGetAttributions: 'assets:get-attributions'
+  assetsGetAttributions: 'assets:get-attributions',
+  villageStateGet: 'village-state:get',
+  villageStateGetCoverage: 'village-state:get-coverage',
+  villageItemsSave: 'village-items:save',
+  villageItemsRemove: 'village-items:remove',
+  buildersSetCount: 'builders:set-count',
+  researchSave: 'research:save',
+  researchRemove: 'research:remove',
+  snapshotsCapture: 'snapshots:capture',
+  snapshotsList: 'snapshots:list',
+  snapshotsGet: 'snapshots:get',
+  legacyList: 'legacy:list'
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]
@@ -127,6 +142,93 @@ export type AttributionDto = {
   attribution: string
 }
 
+/** Where a value came from and whether a person confirmed it. */
+export type ProvenanceDto = {
+  source: StateSource
+  confidence: number
+  /** Null means unconfirmed or estimated; present it as such. */
+  confirmedAt: IsoTimestamp | null
+}
+
+export type CatalogueCoverageDto = {
+  datasetVersion: string
+  validationStatus: ValidationStatus
+  catalogueItemCount: number
+  maxTownHall: number | null
+  villageTownHall: number | null
+  /** False while the game data cannot support item or research records. */
+  canRecordItems: boolean
+  reason: string | null
+}
+
+export type BuilderDto = ProvenanceDto & {
+  id: number
+  slot: number
+  assignedItemInstanceId: number | null
+}
+
+export type VillageItemDto = ProvenanceDto & {
+  id: number
+  itemId: string
+  instanceNumber: number
+  level: number
+  targetLevel: number | null
+  upgradeStartedAt: IsoTimestamp | null
+  upgradeEndsAt: IsoTimestamp | null
+  builderId: number | null
+}
+
+export type ResearchStateDto = ProvenanceDto & {
+  id: number
+  itemId: string
+  level: number
+  targetLevel: number | null
+  researchStartedAt: IsoTimestamp | null
+  researchEndsAt: IsoTimestamp | null
+}
+
+export type SnapshotSummaryDto = {
+  id: number
+  capturedAt: IsoTimestamp
+  source: StateSource
+  dataVersion: string
+  schemaVersion: number
+}
+
+export type SnapshotDto = SnapshotSummaryDto & {
+  payload: import('../../domain/village-state').VillageSnapshotPayload
+}
+
+export type LegacyRecordCountsDto = Record<ReconciliationStatus, number>
+
+export type VillageStateDto = {
+  village: VillageDto
+  coverage: CatalogueCoverageDto
+  builders: BuilderDto[]
+  items: VillageItemDto[]
+  research: ResearchStateDto[]
+  activeResearchItemId: string | null
+  latestSnapshot: { id: number; capturedAt: IsoTimestamp; source: StateSource } | null
+  legacyRecords: LegacyRecordCountsDto
+}
+
+export type LegacyRecordDto = {
+  kind: LegacyKind
+  id: number
+  name: string
+  category: string | null
+  level: number
+  quantity: number
+  isUpgrading: boolean
+  upgradeStartedAt: IsoTimestamp | null
+  upgradeEndsAt: IsoTimestamp | null
+  status: ReconciliationStatus
+  mappedItemId: string | null
+  note: string | null
+  reconciledAt: IsoTimestamp | null
+  archivedAt: IsoTimestamp | null
+}
+
 // ---------------------------------------------------------------------------
 // Inputs sent from the renderer (all operate on the local village)
 // ---------------------------------------------------------------------------
@@ -192,6 +294,36 @@ export type AssetsResolveInput = {
   level?: number | null
 }
 
+/** Omit `id` to record a new instance. Manual saves are stored as confirmed. */
+export type VillageItemSaveInput = {
+  id?: number
+  itemId: string
+  instanceNumber: number
+  level: number
+  targetLevel: number | null
+  upgradeStartedAt: IsoTimestamp | null
+  upgradeEndsAt: IsoTimestamp | null
+  builderId: number | null
+}
+
+export type IdInput = { id: number }
+
+export type BuildersSetCountInput = { count: number }
+
+export type ResearchSaveInput = {
+  itemId: string
+  level: number
+  targetLevel: number | null
+  researchStartedAt: IsoTimestamp | null
+  researchEndsAt: IsoTimestamp | null
+}
+
+export type ResearchRemoveInput = { itemId: string }
+
+export type SnapshotsListInput = { limit?: number }
+
+export type LegacyListInput = { status?: ReconciliationStatus }
+
 // ---------------------------------------------------------------------------
 // Results and errors
 // ---------------------------------------------------------------------------
@@ -200,6 +332,8 @@ export const IPC_ERROR_CODES = [
   'VALIDATION_ERROR',
   'NOT_FOUND',
   'VILLAGE_NOT_INITIALISED',
+  /** The bundled game data does not cover this yet; not the user's mistake. */
+  'CATALOGUE_INCOMPLETE',
   'FORBIDDEN',
   'INTERNAL_ERROR'
 ] as const
@@ -234,6 +368,17 @@ export type IpcContract = {
   'town-hall:compare': { request: TownHallCompareInput; response: TownHallComparisonDto }
   'assets:resolve': { request: AssetsResolveInput; response: AssetResolutionDto }
   'assets:get-attributions': { request: void; response: AttributionDto[] }
+  'village-state:get': { request: void; response: VillageStateDto | null }
+  'village-state:get-coverage': { request: void; response: CatalogueCoverageDto }
+  'village-items:save': { request: VillageItemSaveInput; response: VillageItemDto }
+  'village-items:remove': { request: IdInput; response: null }
+  'builders:set-count': { request: BuildersSetCountInput; response: BuilderDto[] }
+  'research:save': { request: ResearchSaveInput; response: ResearchStateDto }
+  'research:remove': { request: ResearchRemoveInput; response: null }
+  'snapshots:capture': { request: void; response: SnapshotDto }
+  'snapshots:list': { request: SnapshotsListInput | void; response: SnapshotSummaryDto[] }
+  'snapshots:get': { request: IdInput; response: SnapshotDto | null }
+  'legacy:list': { request: LegacyListInput | void; response: LegacyRecordDto[] }
 }
 
 export type IpcRequest<C extends IpcChannel> = IpcContract[C]['request']
@@ -267,5 +412,28 @@ export type ClashForgeApi = {
   assets: {
     resolve: (input: AssetsResolveInput) => Promise<IpcResult<AssetResolutionDto>>
     getAttributions: () => Promise<IpcResult<AttributionDto[]>>
+  }
+  villageState: {
+    get: () => Promise<IpcResult<VillageStateDto | null>>
+    getCoverage: () => Promise<IpcResult<CatalogueCoverageDto>>
+  }
+  villageItems: {
+    save: (input: VillageItemSaveInput) => Promise<IpcResult<VillageItemDto>>
+    remove: (input: IdInput) => Promise<IpcResult<null>>
+  }
+  builders: {
+    setCount: (input: BuildersSetCountInput) => Promise<IpcResult<BuilderDto[]>>
+  }
+  research: {
+    save: (input: ResearchSaveInput) => Promise<IpcResult<ResearchStateDto>>
+    remove: (input: ResearchRemoveInput) => Promise<IpcResult<null>>
+  }
+  snapshots: {
+    capture: () => Promise<IpcResult<SnapshotDto>>
+    list: (input?: SnapshotsListInput) => Promise<IpcResult<SnapshotSummaryDto[]>>
+    get: (input: IdInput) => Promise<IpcResult<SnapshotDto | null>>
+  }
+  legacy: {
+    list: (input?: LegacyListInput) => Promise<IpcResult<LegacyRecordDto[]>>
   }
 }

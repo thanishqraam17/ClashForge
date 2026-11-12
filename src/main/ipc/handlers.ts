@@ -5,7 +5,13 @@ import { toAssetUrl } from '../assets/asset-protocol'
 import { TownHallRangeError, type TownHallService } from '../../services/town-hall-service'
 import { UpgradeHistoryValidationError } from '../../domain/upgrade-history'
 import { LOCAL_VILLAGE_ID, VillageValidationError } from '../../domain/village'
-import { manualProvenance } from '../../domain/village-state'
+import { manualProvenance, VillageStateValidationError } from '../../domain/village-state'
+import {
+  CatalogueCoverageError,
+  VillageNotInitialisedError,
+  VillageStateNotFoundError,
+  type VillageStateService
+} from '../../services/village-state-service'
 import {
   HISTORY_RECENT_DEFAULT_LIMIT,
   type IpcChannel,
@@ -16,6 +22,13 @@ import {
 import {
   IpcInputError,
   parseAssetsResolveInput,
+  parseBuildersSetCountInput,
+  parseIdInput,
+  parseLegacyListInput,
+  parseResearchRemoveInput,
+  parseResearchSaveInput,
+  parseSnapshotsListInput,
+  parseVillageItemSaveInput,
   parseCatalogueGetItemInput,
   parseCatalogueGetItemsInput,
   parseEmptyInput,
@@ -26,7 +39,18 @@ import {
   parseTownHallGetSummaryInput,
   parseVillageSaveInput
 } from '../../shared/ipc/validation'
-import { toUpgradeHistoryDto, toVillageDto } from './dto-mappers'
+import {
+  toBuilderDto,
+  toCoverageDto,
+  toLegacyRecordDto,
+  toResearchStateDto,
+  toSnapshotDto,
+  toSnapshotSummaryDto,
+  toUpgradeHistoryDto,
+  toVillageDto,
+  toVillageItemDto,
+  toVillageStateDto
+} from './dto-mappers'
 
 /** Raised by handlers for expected failures that map to a specific error code. */
 export class IpcHandlerError extends Error {
@@ -50,7 +74,8 @@ export type IpcLogger = {
 const DOMAIN_VALIDATION_ERRORS = [
   VillageValidationError,
   UpgradeHistoryValidationError,
-  TownHallRangeError
+  TownHallRangeError,
+  VillageStateValidationError
 ]
 
 function toDate(value: string): Date {
@@ -59,6 +84,13 @@ function toDate(value: string): Date {
 
 function toDateOrNull(value: string | null): Date | null {
   return value === null ? null : new Date(value)
+}
+
+function mapServiceError(error: unknown): IpcErrorCode | null {
+  if (error instanceof CatalogueCoverageError) return 'CATALOGUE_INCOMPLETE'
+  if (error instanceof VillageNotInitialisedError) return 'VILLAGE_NOT_INITIALISED'
+  if (error instanceof VillageStateNotFoundError) return 'NOT_FOUND'
+  return null
 }
 
 /**
@@ -77,6 +109,10 @@ function wrap<C extends IpcChannel>(
     } catch (error) {
       if (error instanceof IpcHandlerError) {
         return { ok: false, error: { code: error.code, message: error.message } }
+      }
+      const mapped = mapServiceError(error)
+      if (mapped) {
+        return { ok: false, error: { code: mapped, message: (error as Error).message } }
       }
       if (
         error instanceof IpcInputError ||
@@ -101,6 +137,7 @@ export type IpcHandlerDependencies = {
   catalogue: CatalogueService
   townHall: TownHallService
   assets: AssetService
+  villageState: VillageStateService
   logger?: IpcLogger
 }
 
@@ -109,6 +146,7 @@ export function createIpcHandlers({
   catalogue,
   townHall,
   assets,
+  villageState,
   logger = console
 }: IpcHandlerDependencies): IpcHandlerMap {
   function requireVillage(): void {
@@ -214,6 +252,73 @@ export function createIpcHandlers({
     'assets:get-attributions': wrap('assets:get-attributions', logger, (payload) => {
       parseEmptyInput(payload)
       return assets.getAttributions()
+    }),
+
+    'village-state:get': wrap('village-state:get', logger, (payload) => {
+      parseEmptyInput(payload)
+      const state = villageState.getState()
+      return state ? toVillageStateDto(state) : null
+    }),
+
+    'village-state:get-coverage': wrap('village-state:get-coverage', logger, (payload) => {
+      parseEmptyInput(payload)
+      return toCoverageDto(villageState.getCoverage())
+    }),
+
+    'village-items:save': wrap('village-items:save', logger, (payload) => {
+      const input = parseVillageItemSaveInput(payload)
+      const saved = villageState.saveItemInstance({
+        ...input,
+        upgradeStartedAt: toDateOrNull(input.upgradeStartedAt),
+        upgradeEndsAt: toDateOrNull(input.upgradeEndsAt)
+      })
+      return toVillageItemDto(saved)
+    }),
+
+    'village-items:remove': wrap('village-items:remove', logger, (payload) => {
+      villageState.removeItemInstance(parseIdInput(payload).id)
+      return null
+    }),
+
+    'builders:set-count': wrap('builders:set-count', logger, (payload) => {
+      return villageState.setBuilderCount(parseBuildersSetCountInput(payload).count).map(toBuilderDto)
+    }),
+
+    'research:save': wrap('research:save', logger, (payload) => {
+      const input = parseResearchSaveInput(payload)
+      const saved = villageState.saveResearch({
+        ...input,
+        researchStartedAt: toDateOrNull(input.researchStartedAt),
+        researchEndsAt: toDateOrNull(input.researchEndsAt)
+      })
+      return toResearchStateDto(saved)
+    }),
+
+    'research:remove': wrap('research:remove', logger, (payload) => {
+      villageState.removeResearch(parseResearchRemoveInput(payload).itemId)
+      return null
+    }),
+
+    'snapshots:capture': wrap('snapshots:capture', logger, (payload) => {
+      parseEmptyInput(payload)
+      return toSnapshotDto(villageState.captureSnapshot('manual'))
+    }),
+
+    'snapshots:list': wrap('snapshots:list', logger, (payload) => {
+      const { limit } = parseSnapshotsListInput(payload)
+      return villageState.listSnapshots(limit).map(toSnapshotSummaryDto)
+    }),
+
+    'snapshots:get': wrap('snapshots:get', logger, (payload) => {
+      const snapshot = villageState.getSnapshot(parseIdInput(payload).id)
+      return snapshot ? toSnapshotDto(snapshot) : null
+    }),
+
+    'legacy:list': wrap('legacy:list', logger, (payload) => {
+      const { status } = parseLegacyListInput(payload)
+      return database.legacyRecords
+        .list({ villageId: LOCAL_VILLAGE_ID, ...(status ? { status } : {}) })
+        .map(toLegacyRecordDto)
     })
   }
 }
