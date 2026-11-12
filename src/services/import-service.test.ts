@@ -133,6 +133,32 @@ describe('ImportService', () => {
       expect(t.database.imports.getById(importId)!.status).toBe('previewed')
     })
 
+    it('treats a provenance change after the preview as stale (audit N4)', () => {
+      addCannons([3, 3])
+      const { importId, plan } = imports.previewText(
+        exportText({ buildings: [{ data: ID.cannon, lvl: 3, cnt: 1 }, { data: ID.cannon, lvl: 5, cnt: 1 }] })
+      )
+      expect(plan.changes.map((c) => c.kind)).toEqual(['change-levels'])
+      // Marking #1 as an unconfirmed estimate would make the same export ambiguous.
+      const first = cannons()[0]!
+      t.database.villageItems.update({ ...first, source: 'timer-estimate', confidence: 0.3, confirmedAt: null })
+      expect(() =>
+        imports.apply({ importId, acceptedChangeIds: ['instances:test-cannon:levels'], conflictResolutions: {} })
+      ).toThrow(StalePreviewError)
+      expect(cannons().map((c) => c.level)).toEqual([3, 3])
+      expect(t.database.imports.getById(importId)!.status).toBe('previewed')
+    })
+
+    it('treats a confirmation change after the preview as stale', () => {
+      addCannons([3])
+      const { importId } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 4, cnt: 1 }] }))
+      const first = cannons()[0]!
+      t.database.villageItems.update({ ...first, confirmedAt: null })
+      expect(() =>
+        imports.apply({ importId, acceptedChangeIds: ['instances:test-cannon:levels'], conflictResolutions: {} })
+      ).toThrow(StalePreviewError)
+    })
+
     it('requires a resolution for every conflict, and honours keep-current', () => {
       addCannons([3, 3], 0)
       const { importId, plan } = imports.previewText(exportText({ buildings: [{ data: ID.cannon, lvl: 5, cnt: 2 }] }))

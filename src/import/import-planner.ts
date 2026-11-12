@@ -211,15 +211,27 @@ export function findTownHallViolations(
   return violations
 }
 
-/** Fingerprint of the state a plan was computed against, to detect stale previews. */
+/**
+ * Fingerprint of the state a plan was computed against, to detect stale
+ * previews. It covers everything the planner reads, including provenance,
+ * which decides whether instance matches are automatic or ambiguous.
+ */
 export function fingerprintState(state: PlanState): string {
+  const provenance = (p: { source: string; confidence: number; confirmedAt: Date | null }) => [
+    p.source,
+    p.confidence,
+    p.confirmedAt ? p.confirmedAt.toISOString() : null
+  ]
   const canonical = {
+    format: 'v2',
     townHall: state.village.townHallLevel,
     items: state.items
-      .map((i) => [i.id, i.itemId, i.instanceNumber, i.level, i.targetLevel, i.builderId, i.builderAssignment])
+      .map((i) => [
+        i.id, i.itemId, i.instanceNumber, i.level, i.targetLevel, i.builderId, i.builderAssignment, ...provenance(i)
+      ])
       .sort((a, b) => (a[0] as number) - (b[0] as number)),
     research: state.research
-      .map((r) => [r.id, r.itemId, r.level, r.targetLevel])
+      .map((r) => [r.id, r.itemId, r.level, r.targetLevel, ...provenance(r)])
       .sort((a, b) => (a[0] as number) - (b[0] as number))
   }
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
