@@ -237,6 +237,7 @@ const ITEM_KEYS = [
   'isUpgradeable',
   'isRepeatable',
   'description',
+  'gameDataId',
   'assetId',
   'sourceIds',
   'lastVerifiedAt'
@@ -287,8 +288,17 @@ function parseItem(
     }
   })
 
+  const gameDataId = f['gameDataId']
+  if (
+    gameDataId !== null &&
+    (typeof gameDataId !== 'number' || !Number.isSafeInteger(gameDataId) || gameDataId < 1)
+  ) {
+    c.add(`${path}.gameDataId`, 'must be null or a positive integer')
+  }
+
   return {
     id,
+    gameDataId: gameDataId as number | null,
     name: c.string(f, 'name', path),
     category: c.oneOf(f, 'category', path, ITEM_CATEGORIES),
     subcategory: c.nullableString(f, 'subcategory', path),
@@ -317,11 +327,20 @@ export function validateGameCatalogue(
     .filter((item): item is CatalogueItem => item !== null)
 
   const seenIds = new Set<string>()
+  const seenGameDataIds = new Map<number, string>()
   items.forEach((item, index) => {
     if (item.id && seenIds.has(item.id)) {
       c.add(`items[${index}].id`, `duplicate item id "${item.id}"`)
     }
     seenIds.add(item.id)
+    if (typeof item.gameDataId === 'number') {
+      const owner = seenGameDataIds.get(item.gameDataId)
+      if (owner !== undefined) {
+        c.add(`items[${index}].gameDataId`, `game data id ${item.gameDataId} is already used by "${owner}"`)
+      } else {
+        seenGameDataIds.set(item.gameDataId, item.id)
+      }
+    }
   })
 
   if (c.issues.length > 0 || manifest === null) {

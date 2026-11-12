@@ -39,6 +39,8 @@ const DAY_MS = 24 * 60 * 60 * 1000
 export type CatalogueService = {
   getItems: (filters?: CatalogueFilters) => CatalogueItem[]
   getItem: (id: ItemId) => CatalogueItem | null
+  /** Item whose verified game data id matches, or null when unmapped. */
+  getItemByGameDataId: (gameDataId: number) => CatalogueItem | null
   getDatasetInfo: (now?: Date) => DatasetInfo
 }
 
@@ -58,6 +60,9 @@ function compareItems(a: CatalogueItem, b: CatalogueItem): number {
 export function createCatalogueService(catalogue: GameCatalogue): CatalogueService {
   const sorted = [...catalogue.items].sort(compareItems)
   const byId = new Map(sorted.map((item) => [item.id, item]))
+  const byGameDataId = new Map(
+    sorted.filter((item) => item.gameDataId !== null).map((item) => [item.gameDataId!, item])
+  )
 
   return {
     getItems(filters = {}) {
@@ -80,6 +85,10 @@ export function createCatalogueService(catalogue: GameCatalogue): CatalogueServi
 
     getItem(id) {
       return byId.get(id) ?? null
+    },
+
+    getItemByGameDataId(gameDataId) {
+      return byGameDataId.get(gameDataId) ?? null
     },
 
     getDatasetInfo(now = new Date()) {

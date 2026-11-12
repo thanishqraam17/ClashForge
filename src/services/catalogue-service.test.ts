@@ -57,6 +57,13 @@ describe('CatalogueService.getItem', () => {
   })
 })
 
+describe('CatalogueService.getItemByGameDataId', () => {
+  it('maps only ids that the catalogue declares', () => {
+    expect(service.getItemByGameDataId(900000003)?.id).toBe('test-cannon')
+    expect(service.getItemByGameDataId(1000008)).toBeNull()
+  })
+})
+
 describe('CatalogueService.getDatasetInfo', () => {
   it('reports version, status, omissions and count', () => {
     const info = service.getDatasetInfo(new Date('2026-11-12T12:00:00.000Z'))

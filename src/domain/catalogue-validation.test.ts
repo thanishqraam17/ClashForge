@@ -38,11 +38,17 @@ function item(overrides: Record<string, unknown> = {}): Record<string, unknown> 
     isUpgradeable: true,
     isRepeatable: true,
     description: null,
+    gameDataId: null,
     assetId: null,
     sourceIds: ['fixture'],
     lastVerifiedAt: null,
     ...overrides
   }
+}
+
+function issues(rawManifest: unknown, rawItems: unknown): string[] {
+  const result = validateGameCatalogue(rawManifest, rawItems)
+  return result.ok ? [] : result.issues.map((issue) => `${issue.path}: ${issue.message}`)
 }
 
 function issuePaths(rawManifest: unknown, rawItems: unknown): string[] {
@@ -127,6 +133,18 @@ describe('validateGameCatalogue', () => {
       'items[0].isRepeatable',
       'items[0].lastVerifiedAt'
     ])
+  })
+
+  it('validates game data ids', () => {
+    expect(issues(manifest(), [item({ gameDataId: 1000008 })])).toEqual([])
+    expect(issuePaths(manifest(), [item({ gameDataId: 0 })])).toEqual(['items[0].gameDataId'])
+    expect(issuePaths(manifest(), [item({ gameDataId: '1000008' })])).toEqual(['items[0].gameDataId'])
+    expect(
+      issuePaths(manifest(), [
+        item({ gameDataId: 1000008 }),
+        item({ id: 'mortar', name: 'Mortar', gameDataId: 1000008 })
+      ])
+    ).toEqual(['items[1].gameDataId'])
   })
 
   it('requires items to reference declared sources', () => {

@@ -56,6 +56,12 @@ export type CatalogueItem = {
   /** True when a village can own more than one instance (e.g. cannons, walls). */
   isRepeatable: boolean
   description: string | null
+  /**
+   * The game's own numeric id for this item, as used by the in-game data
+   * export (`data` field). Null until verified against at least two sources;
+   * never guessed. See docs/data-export-format.md.
+   */
+  gameDataId: number | null
   /** Asset reference, resolved by the asset system (Phase 4). Null until mapped. */
   assetId: string | null
   /** IDs of entries in the manifest's `sources` list that back this item. */

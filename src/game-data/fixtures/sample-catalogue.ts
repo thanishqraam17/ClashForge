@@ -1,6 +1,7 @@
 /**
- * TEST-ONLY sample catalogue. Item names and values are synthetic and do not
- * describe the real game. Never import this from application code.
+ * TEST-ONLY sample catalogue. Item names, values and game data ids (9000000xx)
+ * are synthetic and do not describe the real game. Never import this from
+ * application code.
  */
 
 export const SAMPLE_MANIFEST = {
@@ -39,6 +40,7 @@ function sampleItem(
     isUpgradeable: true,
     isRepeatable: false,
     description: null,
+    gameDataId: null,
     assetId: null,
     sourceIds: ['test-fixture'],
     lastVerifiedAt: null,
@@ -47,17 +49,18 @@ function sampleItem(
 }
 
 export const SAMPLE_ITEMS = [
-  sampleItem('test-hall', 'Test Hall', 'town-hall', 1),
-  sampleItem('test-gold-mine', 'Test Gold Mine', 'resource', 1, { isRepeatable: true }),
-  sampleItem('test-cannon', 'Test Cannon', 'defense', 1, { isRepeatable: true }),
+  sampleItem('test-hall', 'Test Hall', 'town-hall', 1, { gameDataId: 900000001 }),
+  sampleItem('test-gold-mine', 'Test Gold Mine', 'resource', 1, { gameDataId: 900000002, isRepeatable: true }),
+  sampleItem('test-cannon', 'Test Cannon', 'defense', 1, { gameDataId: 900000003, isRepeatable: true }),
   sampleItem('test-mortar', 'Test Mortar', 'defense', 3, {
+    gameDataId: 900000004,
     isRepeatable: true,
     subcategory: 'splash'
   }),
-  sampleItem('test-spike-trap', 'Test Spike Trap', 'trap', 4, { isRepeatable: true }),
-  sampleItem('test-knight', 'Test Knight', 'hero', 7),
-  sampleItem('test-archer', 'Test Archer', 'troop', 1, { subcategory: 'elixir-troop' }),
-  sampleItem('test-heal-spell', 'Test Heal Spell', 'spell', 6),
+  sampleItem('test-spike-trap', 'Test Spike Trap', 'trap', 4, { gameDataId: 900000005, isRepeatable: true }),
+  sampleItem('test-knight', 'Test Knight', 'hero', 7, { gameDataId: 900000006 }),
+  sampleItem('test-archer', 'Test Archer', 'troop', 1, { gameDataId: 900000007, subcategory: 'elixir-troop' }),
+  sampleItem('test-heal-spell', 'Test Heal Spell', 'spell', 6, { gameDataId: 900000008 }),
   sampleItem('test-decoration', 'Test Decoration', 'other', 1, { isUpgradeable: false }),
   sampleItem('bb-test-cannon', 'Test Cannon', 'defense', 1, {
     gameMode: 'builder-base',
