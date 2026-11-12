@@ -1,0 +1,66 @@
+{
+  "semanticsVersion": "0.1.0",
+  "sections": {
+    "buildings": "item-instances",
+    "traps": "item-instances",
+    "heroes": "item-instances",
+    "units": "research",
+    "spells": "research",
+    "siege_machines": "research",
+    "helpers": "out-of-scope",
+    "decos": "out-of-scope",
+    "obstacles": "out-of-scope",
+    "pets": "out-of-scope",
+    "equipment": "out-of-scope",
+    "house_parts": "out-of-scope",
+    "skins": "out-of-scope",
+    "sceneries": "out-of-scope",
+    "buildings2": "out-of-scope",
+    "traps2": "out-of-scope",
+    "decos2": "out-of-scope",
+    "obstacles2": "out-of-scope",
+    "units2": "out-of-scope",
+    "heroes2": "out-of-scope",
+    "skins2": "out-of-scope",
+    "sceneries2": "out-of-scope",
+    "boosts": "out-of-scope"
+  },
+  "rules": [
+    {
+      "id": "entry-level",
+      "meaning": "level",
+      "field": "lvl",
+      "sections": ["buildings", "traps", "heroes", "units", "spells", "siege_machines"],
+      "status": "observed",
+      "confidence": 0.95,
+      "evidence": "Explicit integer on every entry in these sections in export-1 (2026-11-12). Not yet cross-checked against in-game levels, hence below 1."
+    },
+    {
+      "id": "entry-count",
+      "meaning": "instance-count",
+      "field": "cnt",
+      "sections": ["buildings", "traps"],
+      "status": "observed",
+      "confidence": 0.95,
+      "evidence": "Explicit integer on grouped entries in export-1. Not yet cross-checked against in-game counts, hence below 1."
+    },
+    {
+      "id": "missing-count",
+      "meaning": "missing-count-is-one",
+      "field": "cnt",
+      "sections": ["buildings", "traps", "heroes"],
+      "status": "inferred",
+      "confidence": 0.8,
+      "evidence": "In export-1 every entry without cnt also carries timer or gear_up and repeats an id/level that has a grouped entry, which suggests one instance per entry. Inference from one sample."
+    },
+    {
+      "id": "timer-remaining",
+      "meaning": "upgrade-remaining-seconds",
+      "field": "timer",
+      "sections": ["buildings", "traps", "heroes", "units", "spells", "siege_machines"],
+      "status": "unverified",
+      "confidence": 0.5,
+      "evidence": "Hypothesis only. Four traps of one id/level carried timers within 7 seconds of each other, which does not match ordinary builder upgrades. Needs a second export of the same upgrade."
+    }
+  ]
+}
