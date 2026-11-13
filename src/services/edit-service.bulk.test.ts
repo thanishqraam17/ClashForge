@@ -48,7 +48,7 @@ describe('EditService bulk correction', () => {
       source: 'data-export', confidence: 0.9, confirmedAt: null, ...extra
     })
   const upgrading = (n: number, level: number) => {
-    const builder = t.database.builders.create({ villageId: 1, slot: n, source: 'manual', confidence: 1, confirmedAt: new Date(0) })
+    const builder = t.database.builders.create({ villageId: 1, slot: n, kind: 'legacy-unclassified', source: 'manual', confidence: 1, confirmedAt: new Date(0) })
     return add(n, level, { targetLevel: level + 1, builderId: builder.id, builderAssignment: 'confirmed', source: 'manual', confidence: 1, confirmedAt: new Date(0) })
   }
 

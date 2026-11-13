@@ -209,11 +209,23 @@ function validateBuilderAssignment(input: VillageItemPersistInput): void {
 // Builders
 // ---------------------------------------------------------------------------
 
+/**
+ * What a builder row represents:
+ * - `ordinary`: one of the five gem-purchased Home Village Builder Huts.
+ * - `bob`: B.O.B., the distinct, permanent sixth Home Village builder.
+ * - `legacy-unclassified`: inherited from before this distinction existed, or
+ *   not yet confirmed by the player. Counts toward availability like any
+ *   other builder, but never toward the ordinary or B.O.B. ownership totals.
+ */
+export const BUILDER_KINDS = ['ordinary', 'bob', 'legacy-unclassified'] as const
+export type BuilderKind = (typeof BUILDER_KINDS)[number]
+
 export type Builder = Provenance & {
   id: number
   villageId: number
-  /** 1-based builder number shown to the player. */
+  /** 1-based builder number shown to the player. Cosmetic ordering only. */
   slot: number
+  kind: BuilderKind
   createdAt: Date
   updatedAt: Date
 }
@@ -226,6 +238,9 @@ export function validateBuilderInput(input: BuilderPersistInput): void {
   }
   if (!Number.isInteger(input.slot) || input.slot < 1) {
     throw new VillageStateValidationError('slot must be a positive integer')
+  }
+  if (!(BUILDER_KINDS as readonly string[]).includes(input.kind)) {
+    throw new VillageStateValidationError('kind is invalid')
   }
   validateProvenance(input)
 }
@@ -290,6 +305,8 @@ export type VillageSnapshotPayload = {
   }
   builders: Array<{
     slot: number
+    /** Absent on snapshots captured before builder kind existed. */
+    kind?: BuilderKind
     source: StateSource
     confidence: number
     confirmedAt: string | null
@@ -370,6 +387,7 @@ export function buildSnapshotPayload(state: {
     },
     builders: state.builders.map((builder) => ({
       slot: builder.slot,
+      kind: builder.kind,
       source: builder.source,
       confidence: builder.confidence,
       confirmedAt: iso(builder.confirmedAt)

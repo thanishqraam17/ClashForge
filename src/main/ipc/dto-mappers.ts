@@ -84,6 +84,7 @@ export function toBuilderDto(builder: BuilderState): BuilderDto {
   return {
     id: builder.id,
     slot: builder.slot,
+    kind: builder.kind,
     assignedItemInstanceId: builder.assignedItemInstanceId,
     status: builder.status,
     ...provenance(builder)

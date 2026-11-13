@@ -192,8 +192,8 @@ describe('builder assignment rules', () => {
 
 describe('validateBuilderInput', () => {
   it('requires a positive slot', () => {
-    expect(() => validateBuilderInput({ villageId: 1, slot: 1, ...confirmed })).not.toThrow()
-    expect(message(() => validateBuilderInput({ villageId: 1, slot: 0, ...confirmed }))).toBe(
+    expect(() => validateBuilderInput({ villageId: 1, slot: 1, kind: 'ordinary', ...confirmed })).not.toThrow()
+    expect(message(() => validateBuilderInput({ villageId: 1, slot: 0, kind: 'ordinary', ...confirmed }))).toBe(
       'slot must be a positive integer'
     )
   })

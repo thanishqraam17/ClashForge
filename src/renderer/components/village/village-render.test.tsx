@@ -16,7 +16,7 @@ const village: VillageDto = {
 }
 
 const builder = (id: number, slot: number, status: BuilderDto['status'], assigned: number | null = null): BuilderDto => ({
-  id, slot, status, assignedItemInstanceId: assigned, ...prov
+  id, slot, kind: 'legacy-unclassified', status, assignedItemInstanceId: assigned, ...prov
 })
 
 const upgrade = (overrides: Partial<VillageItemDto>): VillageItemDto => ({

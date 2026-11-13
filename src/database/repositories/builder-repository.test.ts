@@ -13,7 +13,7 @@ describe('BuilderRepository', () => {
   afterEach(() => t.cleanup())
 
   function builder(slot: number) {
-    return t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot, ...TEST_CONFIRMED })
+    return t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot, kind: 'legacy-unclassified', ...TEST_CONFIRMED })
   }
 
   it('creates and lists builders by slot', () => {
@@ -63,5 +63,48 @@ describe('BuilderRepository', () => {
     })
     expect(t.database.villageItems.getByBuilder(b.id)).toBeNull()
     expect(t.database.builders.delete(b.id)).toBe(true)
+  })
+
+  it('lists one kind at a time, oldest first', () => {
+    const a = t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 1, kind: 'legacy-unclassified', ...TEST_CONFIRMED })
+    const b = t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 2, kind: 'ordinary', ...TEST_CONFIRMED })
+    const c = t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 3, kind: 'legacy-unclassified', ...TEST_CONFIRMED })
+    expect(t.database.builders.listByVillageAndKind(LOCAL_VILLAGE_ID, 'legacy-unclassified').map((x) => x.id)).toEqual([
+      a.id,
+      c.id
+    ])
+    expect(t.database.builders.listByVillageAndKind(LOCAL_VILLAGE_ID, 'ordinary').map((x) => x.id)).toEqual([b.id])
+    expect(t.database.builders.listByVillageAndKind(LOCAL_VILLAGE_ID, 'bob')).toEqual([])
+  })
+
+  it('relabels a builder without changing its id, slot or assignment', () => {
+    const b = builder(1)
+    const item = t.database.villageItems.create({
+      villageId: LOCAL_VILLAGE_ID,
+      itemId: 'test-cannon',
+      instanceNumber: 1,
+      level: 3,
+      targetLevel: 4,
+      upgradeStartedAt: new Date('2026-11-12T08:00:00.000Z'),
+      upgradeEndsAt: new Date('2026-11-13T08:00:00.000Z'),
+      builderId: b.id,
+      builderAssignment: 'confirmed',
+      upgradeObservedTimer: null,
+      upgradeObservedAt: null,
+      ...TEST_CONFIRMED
+    })
+
+    const relabelled = t.database.builders.relabel(b.id, 'bob')
+    expect(relabelled).toMatchObject({ id: b.id, slot: b.slot, kind: 'bob' })
+    expect(t.database.villageItems.getByBuilder(b.id)?.id).toBe(item.id)
+    expect(t.database.villageItems.getById(item.id)?.builderId).toBe(b.id)
+    expect(() => t.database.builders.relabel(999, 'ordinary')).toThrow(VillageStateValidationError)
+  })
+
+  it('refuses more than one bob row per village at the database level', () => {
+    t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 1, kind: 'bob', ...TEST_CONFIRMED })
+    expect(() =>
+      t.database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 2, kind: 'bob', ...TEST_CONFIRMED })
+    ).toThrow(/UNIQUE/)
   })
 })

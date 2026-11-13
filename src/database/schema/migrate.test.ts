@@ -505,7 +505,7 @@ describe('migrations', () => {
         snapshots: db.prepare('SELECT * FROM village_snapshots').all()
       }
 
-      runMigrations(db)
+      runMigrations(db, { upTo: 5 })
       expect(readAppliedVersion(db)).toBe(5)
       expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
@@ -569,6 +569,89 @@ describe('migrations', () => {
         expect(() => db.prepare(`UPDATE edit_log SET note = 'x'`).run()).toThrow(/edit log entries are immutable/)
         db.prepare('DELETE FROM villages WHERE id = 1').run()
         expect(db.prepare('SELECT COUNT(*) AS n FROM edit_log').get()).toEqual({ n: 0 })
+      })
+    })
+  })
+
+  describe('v5 -> v6', () => {
+    const now = T0
+
+    it('gives every existing builder "legacy-unclassified", inferring nothing from slot or count', () => {
+      runMigrations(db, { upTo: 5 })
+      db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`).run(now, now)
+      // Six rows: a village that happens to have exactly the "5 huts + B.O.B." count,
+      // which must NOT be assumed to mean that.
+      const slots = [1, 2, 3, 4, 5, 6]
+      for (const slot of slots) {
+        db.prepare(
+          `INSERT INTO builders (village_id, slot, source, confidence, created_at, updated_at) VALUES (1, ?, 'manual', 1, ?, ?)`
+        ).run(slot, now, now)
+      }
+      const idsBefore = db.prepare('SELECT id, slot FROM builders ORDER BY slot').all()
+
+      runMigrations(db)
+      expect(readAppliedVersion(db)).toBe(6)
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+
+      const after = db.prepare('SELECT id, slot, kind FROM builders ORDER BY slot').all()
+      expect(after).toEqual(idsBefore.map((row) => ({ ...(row as object), kind: 'legacy-unclassified' })))
+    })
+
+    it('preserves an existing builder id and its active upgrade assignment', () => {
+      runMigrations(db, { upTo: 5 })
+      db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`).run(now, now)
+      db.prepare(
+        `INSERT INTO builders (id, village_id, slot, source, confidence, created_at, updated_at) VALUES (7, 1, 1, 'manual', 1, ?, ?)`
+      ).run(now, now)
+      db.prepare(
+        `INSERT INTO village_items (village_id, item_id, instance_number, level, target_level, builder_id,
+           builder_assignment, source, confidence, confirmed_at, created_at, updated_at)
+         VALUES (1, 'cannon', 1, 3, 4, 7, 'confirmed', 'manual', 1, ?, ?, ?)`
+      ).run(now, now, now)
+
+      runMigrations(db)
+      expect(db.prepare('SELECT id, kind FROM builders').get()).toEqual({ id: 7, kind: 'legacy-unclassified' })
+      expect(db.prepare('SELECT builder_id FROM village_items WHERE item_id = ?').get('cannon')).toEqual({
+        builder_id: 7
+      })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+    })
+
+    describe('builder kind constraints', () => {
+      beforeEach(() => {
+        runMigrations(db)
+        db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`).run(now, now)
+      })
+
+      const insertBuilder = (slot: number, kind: string) =>
+        db
+          .prepare(
+            `INSERT INTO builders (village_id, slot, kind, source, confidence, created_at, updated_at)
+             VALUES (1, ?, ?, 'manual', 1, ?, ?)`
+          )
+          .run(slot, kind, now, now)
+
+      it('defaults new rows to legacy-unclassified and rejects an invalid kind', () => {
+        db.prepare(
+          `INSERT INTO builders (village_id, slot, source, confidence, created_at, updated_at) VALUES (1, 1, 'manual', 1, ?, ?)`
+        ).run(now, now)
+        expect(db.prepare('SELECT kind FROM builders').get()).toEqual({ kind: 'legacy-unclassified' })
+        expect(() => insertBuilder(2, 'master-builder')).toThrow(/CHECK/)
+      })
+
+      it('allows only one bob row per village', () => {
+        insertBuilder(1, 'bob')
+        expect(() => insertBuilder(2, 'bob')).toThrow(/UNIQUE/)
+      })
+
+      it('allows more than one ordinary row, and a bob row in a different village', () => {
+        insertBuilder(1, 'ordinary')
+        expect(() => insertBuilder(2, 'ordinary')).not.toThrow()
+        db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (2, 9, ?, ?)`).run(now, now)
+        insertBuilder(3, 'bob')
+        expect(() => db.prepare(`INSERT INTO builders (village_id, slot, kind, source, confidence, created_at, updated_at)
+          VALUES (2, 1, 'bob', 'manual', 1, ?, ?)`).run(now, now)).not.toThrow()
       })
     })
   })

@@ -61,7 +61,7 @@ function instance(overrides: Partial<VillageItemDto> = {}): VillageItemDto {
 }
 
 const builder = (slot: number, status: BuilderDto['status'], assigned: number | null = null): BuilderDto => ({
-  id: 100 + slot, slot, status, assignedItemInstanceId: assigned, ...prov
+  id: 100 + slot, slot, kind: 'legacy-unclassified', status, assignedItemInstanceId: assigned, ...prov
 })
 
 const village: VillageDto = {

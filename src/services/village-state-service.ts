@@ -433,7 +433,9 @@ export function createVillageStateService({
         }
         const slots = new Set(current.map((builder) => builder.slot))
         for (let slot = 1; slot <= count; slot += 1) {
-          if (!slots.has(slot)) database.builders.create({ villageId, slot, ...provenance })
+          if (!slots.has(slot)) {
+            database.builders.create({ villageId, slot, kind: 'legacy-unclassified', ...provenance })
+          }
         }
         return builderStates(database.villageItems.listByVillage(villageId))
       })

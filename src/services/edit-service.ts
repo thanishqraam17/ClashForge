@@ -187,7 +187,7 @@ export function buildersLogState(builders: Builder[]): JsonValue {
     count: builders.length,
     builders: [...builders]
       .sort((a, b) => a.slot - b.slot)
-      .map((b) => ({ id: b.id, slot: b.slot, source: b.source, confidence: b.confidence, confirmedAt: iso(b.confirmedAt) }))
+      .map((b) => ({ id: b.id, slot: b.slot, kind: b.kind, source: b.source, confidence: b.confidence, confirmedAt: iso(b.confirmedAt) }))
   }
 }
 

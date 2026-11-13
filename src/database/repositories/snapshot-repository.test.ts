@@ -15,8 +15,8 @@ describe('SnapshotRepository', () => {
 
   function seedState() {
     const { database } = t
-    database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 1, ...TEST_CONFIRMED })
-    const b2 = database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 2, ...TEST_CONFIRMED })
+    database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 1, kind: 'legacy-unclassified', ...TEST_CONFIRMED })
+    const b2 = database.builders.create({ villageId: LOCAL_VILLAGE_ID, slot: 2, kind: 'legacy-unclassified', ...TEST_CONFIRMED })
     database.villageItems.create({
       villageId: LOCAL_VILLAGE_ID,
       itemId: 'test-cannon',

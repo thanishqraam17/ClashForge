@@ -16,7 +16,7 @@ import type {
   ValidationStatus
 } from '../../domain/catalogue'
 import type { ItemAtTownHall } from '../../domain/town-hall-rules'
-import type { StateSource } from '../../domain/village-state'
+import type { BuilderKind, StateSource } from '../../domain/village-state'
 import type {
   LegacyKind,
   ReconciliationStatus
@@ -184,6 +184,7 @@ export type CatalogueCoverageDto = {
 export type BuilderDto = ProvenanceDto & {
   id: number
   slot: number
+  kind: BuilderKind
   assignedItemInstanceId: number | null
   /** `possibly-busy`: idle on record but an upgrade with an unknown builder exists. */
   status: 'busy' | 'free' | 'possibly-busy'
