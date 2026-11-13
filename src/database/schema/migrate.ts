@@ -5,6 +5,7 @@ import migration003 from '../migrations/003_village_state.sql?raw'
 import migration004 from '../migrations/004_imports_and_builder_assignment.sql?raw'
 import migration005 from '../migrations/005_edit_log.sql?raw'
 import migration006 from '../migrations/006_builder_kind.sql?raw'
+import migration007 from '../migrations/007_edit_log_builder_ownership_actions.sql?raw'
 
 /**
  * Timestamps: ISO 8601 UTC strings (e.g. 2026-09-14T10:30:00.000Z), stored as TEXT.
@@ -17,7 +18,8 @@ const MIGRATIONS: ReadonlyArray<{ version: number; sql: string }> = [
   { version: 3, sql: migration003 },
   { version: 4, sql: migration004 },
   { version: 5, sql: migration005 },
-  { version: 6, sql: migration006 }
+  { version: 6, sql: migration006 },
+  { version: 7, sql: migration007 }
 ]
 
 export function readAppliedVersion(db: Database.Database): number {

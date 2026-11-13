@@ -56,7 +56,11 @@ const api: ClashForgeApi = {
     setCount: (input) => invoke(IPC_CHANNELS.villageItemsSetCount, input)
   },
   builders: {
-    setCount: (input) => invoke(IPC_CHANNELS.buildersSetCount, input)
+    setCount: (input) => invoke(IPC_CHANNELS.buildersSetCount, input),
+    setOrdinaryCount: (input) => invoke(IPC_CHANNELS.buildersSetOrdinaryCount, input),
+    setBob: (input) => invoke(IPC_CHANNELS.buildersSetBob, input),
+    reclassifyLegacy: (input) => invoke(IPC_CHANNELS.buildersReclassifyLegacy, input),
+    removeUnclassified: (input) => invoke(IPC_CHANNELS.buildersRemoveUnclassified, input)
   },
   research: {
     save: (input) => invoke(IPC_CHANNELS.researchSave, input),

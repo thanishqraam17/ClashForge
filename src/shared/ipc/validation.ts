@@ -15,7 +15,11 @@ import {
   type VillageItemsSetLevelsInput,
   type CatalogueGetItemInput,
   type AssetsResolveInput,
+  type BuildersReclassifyLegacyInput,
+  type BuildersRemoveUnclassifiedInput,
+  type BuildersSetBobInput,
   type BuildersSetCountInput,
+  type BuildersSetOrdinaryCountInput,
   type ImportApplyInput,
   type ImportListInput,
   type ImportPreviewTextInput,
@@ -401,6 +405,46 @@ export function parseIdInput(value: unknown): IdInput {
 export function parseBuildersSetCountInput(value: unknown): BuildersSetCountInput {
   const f = asObject(value, ['count', 'note'], 'builder count')
   return { count: nonNegativeInt(f, 'count'), ...noteField(f) }
+}
+
+const ORDINARY_BUILDER_HUT_MAX = 5
+
+function boundedInt(fields: Fields, key: string, min: number, max: number): number {
+  const value = fields[key]
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new IpcInputError(`${key} must be an integer between ${min} and ${max}`)
+  }
+  return value
+}
+
+function booleanField(fields: Fields, key: string): boolean {
+  const value = fields[key]
+  if (typeof value !== 'boolean') throw new IpcInputError(`${key} must be a boolean`)
+  return value
+}
+
+export function parseBuildersSetOrdinaryCountInput(value: unknown): BuildersSetOrdinaryCountInput {
+  const f = asObject(value, ['count', 'note'], 'ordinary Builder Hut count')
+  return { count: boundedInt(f, 'count', 0, ORDINARY_BUILDER_HUT_MAX), ...noteField(f) }
+}
+
+export function parseBuildersSetBobInput(value: unknown): BuildersSetBobInput {
+  const f = asObject(value, ['unlocked', 'note'], 'B.O.B. ownership')
+  return { unlocked: booleanField(f, 'unlocked'), ...noteField(f) }
+}
+
+export function parseBuildersReclassifyLegacyInput(value: unknown): BuildersReclassifyLegacyInput {
+  const f = asObject(value, ['ordinaryCount', 'bob', 'note'], 'legacy builder reclassification')
+  const bob = f['bob']
+  if (bob !== true && bob !== false && bob !== 'unsure') {
+    throw new IpcInputError("bob must be true, false or 'unsure'")
+  }
+  return { ordinaryCount: boundedInt(f, 'ordinaryCount', 0, ORDINARY_BUILDER_HUT_MAX), bob, ...noteField(f) }
+}
+
+export function parseBuildersRemoveUnclassifiedInput(value: unknown): BuildersRemoveUnclassifiedInput {
+  const f = asObject(value, ['id', 'note'], 'builder')
+  return { id: positiveInt(f, 'id'), ...noteField(f) }
 }
 
 export function parseResearchSaveInput(value: unknown): ResearchSaveInput {

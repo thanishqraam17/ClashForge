@@ -589,7 +589,7 @@ describe('migrations', () => {
       }
       const idsBefore = db.prepare('SELECT id, slot FROM builders ORDER BY slot').all()
 
-      runMigrations(db)
+      runMigrations(db, { upTo: 6 })
       expect(readAppliedVersion(db)).toBe(6)
       expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
       expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
@@ -653,6 +653,58 @@ describe('migrations', () => {
         expect(() => db.prepare(`INSERT INTO builders (village_id, slot, kind, source, confidence, created_at, updated_at)
           VALUES (2, 1, 'bob', 'manual', 1, ?, ?)`).run(now, now)).not.toThrow()
       })
+    })
+  })
+
+  describe('v6 -> v7', () => {
+    const now = T0
+
+    it('keeps every existing edit-log row, including its immutability, and widens the allowed actions', () => {
+      runMigrations(db, { upTo: 6 })
+      db.prepare(`INSERT INTO villages (id, town_hall_level, created_at, updated_at) VALUES (1, 9, ?, ?)`).run(now, now)
+      db.prepare(
+        `INSERT INTO edit_log (village_id, entity_type, entity_id, item_id, action, before_state, after_state, batch_id, note, created_at)
+         VALUES (1, 'builders', NULL, NULL, 'set-count', '{"count":0}', '{"count":2}', NULL, NULL, ?)`
+      ).run(now)
+      const before = db.prepare('SELECT * FROM edit_log').all()
+
+      runMigrations(db)
+      expect(readAppliedVersion(db)).toBe(7)
+      expect(db.prepare('PRAGMA integrity_check').get()).toEqual({ integrity_check: 'ok' })
+      expect(db.prepare('PRAGMA foreign_key_check').all()).toEqual([])
+      expect(db.prepare('SELECT * FROM edit_log').all()).toEqual(before)
+
+      expect(() => db.prepare(`UPDATE edit_log SET note = 'x'`).run()).toThrow(/edit log entries are immutable/)
+
+      for (const action of ['set-ordinary-huts', 'set-bob', 'reclassify-legacy-builders']) {
+        expect(() =>
+          db
+            .prepare(
+              `INSERT INTO edit_log (village_id, entity_type, entity_id, item_id, action, before_state, after_state, batch_id, note, created_at)
+               VALUES (1, 'builders', NULL, NULL, ?, '{"a":1}', '{"a":2}', NULL, NULL, ?)`
+            )
+            .run(action, now),
+          action
+        ).not.toThrow()
+      }
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO edit_log (village_id, entity_type, entity_id, item_id, action, before_state, after_state, batch_id, note, created_at)
+             VALUES (1, 'builders', NULL, NULL, 'not-a-real-action', '{"a":1}', '{"a":2}', NULL, NULL, ?)`
+          )
+          .run(now)
+      ).toThrow(/CHECK/)
+
+      // AUTOINCREMENT continues from the preserved row's id, not from 1.
+      const maxId = (db.prepare('SELECT MAX(id) AS id FROM edit_log').get() as { id: number }).id
+      const next = db
+        .prepare(
+          `INSERT INTO edit_log (village_id, entity_type, entity_id, item_id, action, before_state, after_state, batch_id, note, created_at)
+           VALUES (1, 'builders', NULL, NULL, 'set-bob', '{"a":1}', '{"a":2}', NULL, NULL, ?)`
+        )
+        .run(now)
+      expect(Number(next.lastInsertRowid)).toBeGreaterThan(maxId - 1)
     })
   })
 

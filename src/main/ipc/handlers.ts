@@ -31,7 +31,11 @@ import {
 import {
   IpcInputError,
   parseAssetsResolveInput,
+  parseBuildersReclassifyLegacyInput,
+  parseBuildersRemoveUnclassifiedInput,
+  parseBuildersSetBobInput,
   parseBuildersSetCountInput,
+  parseBuildersSetOrdinaryCountInput,
   parseEditLogGetBatchInput,
   parseEditLogListInput,
   parseLegacyMapInput,
@@ -327,6 +331,27 @@ export function createIpcHandlers({
     'builders:set-count': wrap('builders:set-count', logger, (payload) => {
       const { count, note = null } = parseBuildersSetCountInput(payload)
       return edits.setBuilderCount(count, note).map(toBuilderDto)
+    }),
+
+    'builders:set-ordinary-count': wrap('builders:set-ordinary-count', logger, (payload) => {
+      const { count, note = null } = parseBuildersSetOrdinaryCountInput(payload)
+      return edits.setOrdinaryBuilderHuts(count, note).map(toBuilderDto)
+    }),
+
+    'builders:set-bob': wrap('builders:set-bob', logger, (payload) => {
+      const { unlocked, note = null } = parseBuildersSetBobInput(payload)
+      return edits.setBobUnlocked(unlocked, note).map(toBuilderDto)
+    }),
+
+    'builders:reclassify-legacy': wrap('builders:reclassify-legacy', logger, (payload) => {
+      const { ordinaryCount, bob, note = null } = parseBuildersReclassifyLegacyInput(payload)
+      return edits.reclassifyLegacyBuilders({ ordinaryCount, bob }, note).map(toBuilderDto)
+    }),
+
+    'builders:remove-unclassified': wrap('builders:remove-unclassified', logger, (payload) => {
+      const { id, note = null } = parseBuildersRemoveUnclassifiedInput(payload)
+      edits.removeUnclassifiedBuilder(id, note)
+      return null
     }),
 
     'research:save': wrap('research:save', logger, (payload) => {

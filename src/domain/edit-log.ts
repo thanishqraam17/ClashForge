@@ -16,7 +16,17 @@ export const EDIT_ENTITY_TYPES = [
 ] as const
 export type EditEntityType = (typeof EDIT_ENTITY_TYPES)[number]
 
-export const EDIT_ACTIONS = ['create', 'update', 'delete', 'set-count', 'map', 'dismiss'] as const
+export const EDIT_ACTIONS = [
+  'create',
+  'update',
+  'delete',
+  'set-count',
+  'map',
+  'dismiss',
+  'set-ordinary-huts',
+  'set-bob',
+  'reclassify-legacy-builders'
+] as const
 export type EditAction = (typeof EDIT_ACTIONS)[number]
 
 /** A JSON value with nothing that JSON would silently drop or change. */

@@ -52,6 +52,10 @@ export const IPC_CHANNELS = {
   villageItemsSave: 'village-items:save',
   villageItemsRemove: 'village-items:remove',
   buildersSetCount: 'builders:set-count',
+  buildersSetOrdinaryCount: 'builders:set-ordinary-count',
+  buildersSetBob: 'builders:set-bob',
+  buildersReclassifyLegacy: 'builders:reclassify-legacy',
+  buildersRemoveUnclassified: 'builders:remove-unclassified',
   researchSave: 'research:save',
   researchRemove: 'research:remove',
   snapshotsCapture: 'snapshots:capture',
@@ -415,6 +419,13 @@ export type VillageItemRemoveInput = IdInput & EditNoteInput
 
 export type BuildersSetCountInput = EditNoteInput & { count: number }
 
+/** 0-5 ordinary Home Village Builder Huts. */
+export type BuildersSetOrdinaryCountInput = EditNoteInput & { count: number }
+export type BuildersSetBobInput = EditNoteInput & { unlocked: boolean }
+/** 'unsure' leaves B.O.B. ownership undecided; only ordinaryCount is applied. */
+export type BuildersReclassifyLegacyInput = EditNoteInput & { ordinaryCount: number; bob: boolean | 'unsure' }
+export type BuildersRemoveUnclassifiedInput = EditNoteInput & { id: number }
+
 export type ResearchSaveInput = EditNoteInput & {
   itemId: string
   level: number
@@ -542,6 +553,10 @@ export type IpcContract = {
   'village-items:set-levels': { request: VillageItemsSetLevelsInput; response: BulkEditResultDto }
   'village-items:set-count': { request: VillageItemsSetCountInput; response: BulkEditResultDto }
   'builders:set-count': { request: BuildersSetCountInput; response: BuilderDto[] }
+  'builders:set-ordinary-count': { request: BuildersSetOrdinaryCountInput; response: BuilderDto[] }
+  'builders:set-bob': { request: BuildersSetBobInput; response: BuilderDto[] }
+  'builders:reclassify-legacy': { request: BuildersReclassifyLegacyInput; response: BuilderDto[] }
+  'builders:remove-unclassified': { request: BuildersRemoveUnclassifiedInput; response: null }
   'research:save': { request: ResearchSaveInput; response: ResearchStateDto }
   'research:remove': { request: ResearchRemoveInput; response: null }
   'snapshots:capture': { request: void; response: SnapshotDto }
@@ -613,6 +628,10 @@ export type ClashForgeApi = {
   }
   builders: {
     setCount: (input: BuildersSetCountInput) => Promise<IpcResult<BuilderDto[]>>
+    setOrdinaryCount: (input: BuildersSetOrdinaryCountInput) => Promise<IpcResult<BuilderDto[]>>
+    setBob: (input: BuildersSetBobInput) => Promise<IpcResult<BuilderDto[]>>
+    reclassifyLegacy: (input: BuildersReclassifyLegacyInput) => Promise<IpcResult<BuilderDto[]>>
+    removeUnclassified: (input: BuildersRemoveUnclassifiedInput) => Promise<IpcResult<null>>
   }
   research: {
     save: (input: ResearchSaveInput) => Promise<IpcResult<ResearchStateDto>>

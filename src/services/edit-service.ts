@@ -52,6 +52,17 @@ export type EditService = {
   saveItemInstance: (input: ItemInstanceInput, note?: string | null) => VillageItemInstance
   removeItemInstance: (id: number, note?: string | null) => void
   setBuilderCount: (count: number, note?: string | null) => BuilderState[]
+  /** 0-5. Only touches rows already kind 'ordinary'. */
+  setOrdinaryBuilderHuts: (count: number, note?: string | null) => BuilderState[]
+  /** Only touches the single 'bob' row. A no-op, not an error, when already set. */
+  setBobUnlocked: (unlocked: boolean, note?: string | null) => BuilderState[]
+  /** Confirms what some legacy-unclassified rows are; never deletes, never shrinks a confirmed pool. */
+  reclassifyLegacyBuilders: (
+    input: { ordinaryCount: number; bob: boolean | 'unsure' },
+    note?: string | null
+  ) => BuilderState[]
+  /** Removes one named legacy-unclassified builder the player has identified as not existing. */
+  removeUnclassifiedBuilder: (id: number, note?: string | null) => void
   saveResearch: (input: ResearchInput, note?: string | null) => ResearchState
   removeResearch: (itemId: string, note?: string | null) => void
   /**
@@ -182,12 +193,14 @@ export function researchLogState(research: ResearchState): JsonValue {
   }
 }
 
+function builderLogState(b: Builder): JsonValue {
+  return { id: b.id, slot: b.slot, kind: b.kind, source: b.source, confidence: b.confidence, confirmedAt: iso(b.confirmedAt) }
+}
+
 export function buildersLogState(builders: Builder[]): JsonValue {
   return {
     count: builders.length,
-    builders: [...builders]
-      .sort((a, b) => a.slot - b.slot)
-      .map((b) => ({ id: b.id, slot: b.slot, kind: b.kind, source: b.source, confidence: b.confidence, confirmedAt: iso(b.confirmedAt) }))
+    builders: [...builders].sort((a, b) => a.slot - b.slot).map(builderLogState)
   }
 }
 
@@ -473,6 +486,80 @@ export function createEditService({ database, villageState, catalogue, townHall 
           note
         })
         return result
+      })
+    },
+
+    setOrdinaryBuilderHuts(count, note = null) {
+      checkNote(note)
+      return database.transaction(() => {
+        const before = buildersLogState(database.builders.listByVillage(villageId))
+        const result = villageState.setOrdinaryBuilderHuts(count)
+        log({
+          entityType: 'builders',
+          entityId: null,
+          itemId: null,
+          action: 'set-ordinary-huts',
+          before,
+          after: buildersLogState(database.builders.listByVillage(villageId)),
+          note
+        })
+        return result
+      })
+    },
+
+    setBobUnlocked(unlocked, note = null) {
+      checkNote(note)
+      return database.transaction(() => {
+        const before = buildersLogState(database.builders.listByVillage(villageId))
+        const result = villageState.setBobUnlocked(unlocked)
+        log({
+          entityType: 'builders',
+          entityId: null,
+          itemId: null,
+          action: 'set-bob',
+          before,
+          after: buildersLogState(database.builders.listByVillage(villageId)),
+          note
+        })
+        return result
+      })
+    },
+
+    reclassifyLegacyBuilders(input, note = null) {
+      checkNote(note)
+      return database.transaction(() => {
+        const before = buildersLogState(database.builders.listByVillage(villageId))
+        const result = villageState.reclassifyLegacyBuilders(input)
+        log({
+          entityType: 'builders',
+          entityId: null,
+          itemId: null,
+          action: 'reclassify-legacy-builders',
+          before,
+          after: buildersLogState(database.builders.listByVillage(villageId)),
+          note
+        })
+        return result
+      })
+    },
+
+    removeUnclassifiedBuilder(id, note = null) {
+      checkNote(note)
+      database.transaction(() => {
+        const existing = database.builders.getById(id)
+        if (existing === null || existing.villageId !== villageId) {
+          throw new VillageStateNotFoundError(`Builder ${id} does not exist`)
+        }
+        villageState.removeUnclassifiedBuilder(id)
+        log({
+          entityType: 'builders',
+          entityId: id,
+          itemId: null,
+          action: 'delete',
+          before: builderLogState(existing),
+          after: null,
+          note
+        })
       })
     },
 
