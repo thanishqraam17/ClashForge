@@ -172,6 +172,25 @@ export type VillageStateService = {
   setOrdinaryBuilderHuts: (count: number, provenance?: Provenance) => BuilderState[]
   /** Only ever touches the single 'bob' row; never legacy or ordinary rows. */
   setBobUnlocked: (unlocked: boolean, provenance?: Provenance) => BuilderState[]
+  /**
+   * Confirms what some legacy-unclassified rows actually are. Already
+   * ordinary/bob rows are left alone (correcting those is setOrdinaryBuilderHuts
+   * / setBobUnlocked's job); only the shortfall against what is already
+   * confirmed is satisfied, oldest legacy rows first, creating new rows only
+   * once the legacy pool is exhausted. Builder ids are never deleted here;
+   * any legacy row left over after the target is reached stays
+   * legacy-unclassified.
+   */
+  reclassifyLegacyBuilders: (
+    input: { ordinaryCount: number; bob: boolean | 'unsure' },
+    provenance?: Provenance
+  ) => BuilderState[]
+  /**
+   * Removes exactly one legacy-unclassified builder the player has identified
+   * as not actually existing. Busy-protected like every other removal. Never
+   * touches an ordinary or bob row.
+   */
+  removeUnclassifiedBuilder: (id: number) => void
   saveResearch: (input: ResearchInput, provenance?: Provenance) => ResearchState
   removeResearch: (itemId: string) => void
   captureSnapshot: (source?: StateSource) => VillageSnapshot
@@ -561,6 +580,86 @@ export function createVillageStateService({
           database.builders.delete(existingBob.id)
         }
         return builderStates(database.villageItems.listByVillage(villageId))
+      })
+    },
+
+    reclassifyLegacyBuilders({ ordinaryCount, bob }, provenance = manualProvenance()) {
+      if (!Number.isInteger(ordinaryCount) || ordinaryCount < 0 || ordinaryCount > ORDINARY_BUILDER_HUT_MAX) {
+        throw new VillageStateValidationError(
+          `Ordinary Builder Huts must be between 0 and ${ORDINARY_BUILDER_HUT_MAX}`
+        )
+      }
+      if (bob !== true && bob !== false && bob !== 'unsure') {
+        throw new VillageStateValidationError("bob must be true, false or 'unsure'")
+      }
+      return database.transaction(() => {
+        requireVillage()
+        const ordinaryNow = database.builders.listByVillageAndKind(villageId, 'ordinary')
+        const bobNow = database.builders.listByVillageAndKind(villageId, 'bob')
+        if (ordinaryCount < ordinaryNow.length) {
+          throw new VillageStateValidationError(
+            `${ordinaryNow.length} ordinary Builder Hut${ordinaryNow.length === 1 ? '' : 's'} ${ordinaryNow.length === 1 ? 'is' : 'are'} already confirmed; use setOrdinaryBuilderHuts to correct the count`
+          )
+        }
+        if (bob === false && bobNow.length > 0) {
+          throw new VillageStateValidationError('B.O.B. is already confirmed; use setBobUnlocked to retract it')
+        }
+
+        const ordinaryShortfall = ordinaryCount - ordinaryNow.length
+        const bobShortfall = bob === true && bobNow.length === 0 ? 1 : 0
+        if (ordinaryShortfall === 0 && bobShortfall === 0) {
+          // Nothing to reclassify: already-confirmed rows are untouched, and
+          // any legacy rows that exist stay legacy-unclassified.
+          return builderStates(database.villageItems.listByVillage(villageId))
+        }
+
+        // Oldest legacy rows first, satisfying the ordinary shortfall before
+        // the B.O.B. shortfall. Mathematically this can never need more new
+        // rows than would exceed the limit: ordinaryCount + (bob?1:0) <= 6
+        // always, by the caps checked above, so the check below is
+        // defense-in-depth rather than something this path can trigger today.
+        const pool = database.builders.listByVillageAndKind(villageId, 'legacy-unclassified')
+        const ordinaryFromLegacy = pool.splice(0, Math.min(ordinaryShortfall, pool.length))
+        const bobFromLegacy = pool.splice(0, Math.min(bobShortfall, pool.length))
+        const newRowsNeeded =
+          ordinaryShortfall - ordinaryFromLegacy.length + (bobShortfall - bobFromLegacy.length)
+        if (newRowsNeeded > 0) assertCanAddHomeVillageBuilders(newRowsNeeded)
+
+        for (const builder of ordinaryFromLegacy) {
+          database.builders.update({ ...builder, kind: 'ordinary', ...provenance })
+        }
+        for (const builder of bobFromLegacy) {
+          database.builders.update({ ...builder, kind: 'bob', ...provenance })
+        }
+        let slot = nextFreeSlot()
+        for (let i = ordinaryFromLegacy.length; i < ordinaryShortfall; i += 1) {
+          database.builders.create({ villageId, slot, kind: 'ordinary', ...provenance })
+          slot = nextFreeSlot()
+        }
+        for (let i = bobFromLegacy.length; i < bobShortfall; i += 1) {
+          database.builders.create({ villageId, slot, kind: 'bob', ...provenance })
+          slot = nextFreeSlot()
+        }
+        return builderStates(database.villageItems.listByVillage(villageId))
+      })
+    },
+
+    removeUnclassifiedBuilder(id) {
+      database.transaction(() => {
+        requireVillage()
+        const builder = database.builders.getById(id)
+        if (builder === null || builder.villageId !== villageId) {
+          throw new VillageStateNotFoundError(`Builder ${id} does not exist`)
+        }
+        if (builder.kind !== 'legacy-unclassified') {
+          throw new VillageStateValidationError('Only an unclassified legacy builder can be removed this way')
+        }
+        if (database.villageItems.getByBuilder(builder.id) !== null) {
+          throw new VillageStateValidationError(
+            `Builder ${builder.slot} is busy; finish or reassign its upgrade first`
+          )
+        }
+        database.builders.delete(builder.id)
       })
     },
 
