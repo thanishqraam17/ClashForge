@@ -60,6 +60,11 @@ const RESEARCH_CATEGORIES: readonly ItemCategory[] = ['troop', 'spell', 'siege-m
 
 export const MAX_BUILDERS = 10
 
+/** The 5 gem-purchased Home Village Builder Huts. */
+export const ORDINARY_BUILDER_HUT_MAX = 5
+/** 5 ordinary huts + B.O.B. There is no other way to have more. */
+export const HOME_VILLAGE_BUILDER_MAX = 6
+
 export type CatalogueCoverage = {
   datasetVersion: string
   validationStatus: ValidationStatus
@@ -92,6 +97,19 @@ export type BuilderState = Builder & {
  * Builder availability, separating what is confirmed from what is estimated.
  * Laboratory research never affects it.
  */
+/**
+ * Confirmed Home Village builder ownership, separated from legacy rows that
+ * have not been classified yet. Legacy rows still count as builders for
+ * availability purposes, but never toward ordinaryConfirmed or bobConfirmed.
+ */
+export type HomeVillageBuilderOwnership = {
+  ordinaryConfirmed: number
+  bobConfirmed: boolean
+  legacyUnclassified: number
+  /** True when confirmed + legacy rows exceed the 6 that are ever possible. */
+  exceedsLimit: boolean
+}
+
 export type BuilderAvailability = {
   total: number
   /** Upgrades with a recorded builder (confirmed or assigned). */
@@ -150,6 +168,10 @@ export type VillageStateService = {
   saveItemInstance: (input: ItemInstanceInput, provenance?: Provenance) => VillageItemInstance
   removeItemInstance: (id: number) => void
   setBuilderCount: (count: number, provenance?: Provenance) => BuilderState[]
+  /** 0-5. Only ever touches rows already kind 'ordinary'; never legacy or bob rows. */
+  setOrdinaryBuilderHuts: (count: number, provenance?: Provenance) => BuilderState[]
+  /** Only ever touches the single 'bob' row; never legacy or ordinary rows. */
+  setBobUnlocked: (unlocked: boolean, provenance?: Provenance) => BuilderState[]
   saveResearch: (input: ResearchInput, provenance?: Provenance) => ResearchState
   removeResearch: (itemId: string) => void
   captureSnapshot: (source?: StateSource) => VillageSnapshot
@@ -166,6 +188,18 @@ export type VillageStateServiceDependencies = {
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
+
+export function summariseHomeVillageBuilderOwnership(builders: Builder[]): HomeVillageBuilderOwnership {
+  const ordinaryConfirmed = builders.filter((b) => b.kind === 'ordinary').length
+  const bobConfirmed = builders.some((b) => b.kind === 'bob')
+  const legacyUnclassified = builders.filter((b) => b.kind === 'legacy-unclassified').length
+  return {
+    ordinaryConfirmed,
+    bobConfirmed,
+    legacyUnclassified,
+    exceedsLimit: ordinaryConfirmed + (bobConfirmed ? 1 : 0) + legacyUnclassified > HOME_VILLAGE_BUILDER_MAX
+  }
+}
 
 export function summariseBuilderAvailability(
   builders: BuilderState[],
@@ -266,6 +300,35 @@ export function createVillageStateService({
     }
     if (targetLevel !== null && targetLevel > maxLevel) {
       throw new VillageStateValidationError(`${name} is already at its maximum level for this Town Hall`)
+    }
+  }
+
+  /** Lowest positive slot not already used by any builder of this village. */
+  function nextFreeSlot(): number {
+    const used = new Set(database.builders.listByVillage(villageId).map((b) => b.slot))
+    let slot = 1
+    while (used.has(slot)) slot += 1
+    return slot
+  }
+
+  /**
+   * Refuses to create `additional` more Home Village builders if doing so
+   * would exceed the 6 that are ever possible, counting every existing row
+   * regardless of kind (confirmed or still-unclassified legacy). Must run
+   * inside the same transaction as the write that follows it.
+   */
+  function assertCanAddHomeVillageBuilders(additional: number): void {
+    const all = database.builders.listByVillage(villageId)
+    const projected = all.length + additional
+    if (projected > HOME_VILLAGE_BUILDER_MAX) {
+      const legacyCount = all.filter((b) => b.kind === 'legacy-unclassified').length
+      const legacyNote =
+        legacyCount > 0
+          ? ` (including ${legacyCount} unclassified legacy builder${legacyCount === 1 ? '' : 's'}; reclassify or remove ${legacyCount === 1 ? 'it' : 'them'} first)`
+          : ''
+      throw new VillageStateValidationError(
+        `This would give the village ${projected} Home Village builders, more than the maximum of ${HOME_VILLAGE_BUILDER_MAX}${legacyNote}`
+      )
     }
   }
 
@@ -436,6 +499,66 @@ export function createVillageStateService({
           if (!slots.has(slot)) {
             database.builders.create({ villageId, slot, kind: 'legacy-unclassified', ...provenance })
           }
+        }
+        return builderStates(database.villageItems.listByVillage(villageId))
+      })
+    },
+
+    setOrdinaryBuilderHuts(count, provenance = manualProvenance()) {
+      if (!Number.isInteger(count) || count < 0 || count > ORDINARY_BUILDER_HUT_MAX) {
+        throw new VillageStateValidationError(
+          `Ordinary Builder Huts must be between 0 and ${ORDINARY_BUILDER_HUT_MAX}`
+        )
+      }
+      return database.transaction(() => {
+        requireVillage()
+        const ordinary = [...database.builders.listByVillageAndKind(villageId, 'ordinary')].sort(
+          (a, b) => a.slot - b.slot
+        )
+        if (count < ordinary.length) {
+          const keep = ordinary.slice(0, count)
+          const excess = ordinary.slice(count)
+          for (const builder of excess) {
+            if (database.villageItems.getByBuilder(builder.id) !== null) {
+              throw new VillageStateValidationError(
+                `Ordinary Builder Hut ${builder.slot} is busy; finish or reassign its upgrade first`
+              )
+            }
+          }
+          for (const builder of excess) database.builders.delete(builder.id)
+          for (const builder of keep) database.builders.update({ ...builder, ...provenance })
+        } else {
+          for (const builder of ordinary) database.builders.update({ ...builder, ...provenance })
+          const toAdd = count - ordinary.length
+          if (toAdd > 0) {
+            assertCanAddHomeVillageBuilders(toAdd)
+            let slot = nextFreeSlot()
+            for (let i = 0; i < toAdd; i += 1) {
+              database.builders.create({ villageId, slot, kind: 'ordinary', ...provenance })
+              slot = nextFreeSlot()
+            }
+          }
+        }
+        return builderStates(database.villageItems.listByVillage(villageId))
+      })
+    },
+
+    setBobUnlocked(unlocked, provenance = manualProvenance()) {
+      return database.transaction(() => {
+        requireVillage()
+        const [existingBob = null] = database.builders.listByVillageAndKind(villageId, 'bob')
+        if (unlocked) {
+          if (existingBob !== null) {
+            database.builders.update({ ...existingBob, ...provenance })
+          } else {
+            assertCanAddHomeVillageBuilders(1)
+            database.builders.create({ villageId, slot: nextFreeSlot(), kind: 'bob', ...provenance })
+          }
+        } else if (existingBob !== null) {
+          if (database.villageItems.getByBuilder(existingBob.id) !== null) {
+            throw new VillageStateValidationError('B.O.B. is busy; finish or reassign its upgrade first')
+          }
+          database.builders.delete(existingBob.id)
         }
         return builderStates(database.villageItems.listByVillage(villageId))
       })
