@@ -164,6 +164,12 @@ describe('village form', () => {
     expect(readVillageForm({ ...values, gold: '2000' }, village)).toMatchObject({ ok: true, warnings: ['Gold is above its capacity'] })
   })
 
+  it('applies the highest Town Hall in the game data only when it is known', () => {
+    expect(readVillageForm({ ...values, townHallLevel: '9' }, village, 8)).toEqual({ ok: false, errors: { townHallLevel: 'Town Hall must be at most 8' } })
+    expect(readVillageForm({ ...values, townHallLevel: '8' }, village, 8).ok).toBe(true)
+    expect(readVillageForm({ ...values, townHallLevel: '17' }, village, null).ok).toBe(true)
+  })
+
   it('detects Town Hall decreases and unsaved changes', () => {
     const lower = readVillageForm({ ...values, townHallLevel: '5' }, village)
     expect(lower.ok && isTownHallDecrease(village, lower.input)).toBe(true)

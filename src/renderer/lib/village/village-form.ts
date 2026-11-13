@@ -74,13 +74,21 @@ export function checkNoteText(text: string): string | null {
  * Builds the village:save payload. lastScannedAt is carried over unchanged
  * because this form does not edit it.
  */
-export function readVillageForm(values: VillageFormValues, current: VillageDto | null): VillageFormResult {
+export function readVillageForm(
+  values: VillageFormValues,
+  current: VillageDto | null,
+  /** Highest Town Hall the game data covers; null when not known (no limit is applied). */
+  maxTownHall: number | null = null
+): VillageFormResult {
   const errors: Partial<Record<VillageNumberField | 'note', string>> = {}
   const numbers = {} as Record<VillageNumberField, number>
   for (const field of VILLAGE_NUMBER_FIELDS) {
     const value = parseWholeNumber(values[field])
     if (value === null) errors[field] = `${LABELS[field]} must be a whole number of 0 or more`
     else if (field === 'townHallLevel' && value < 1) errors[field] = 'Town Hall must be at least 1'
+    else if (field === 'townHallLevel' && maxTownHall !== null && value > maxTownHall) {
+      errors[field] = `Town Hall must be at most ${maxTownHall}`
+    }
     else numbers[field] = value
   }
   const noteError = checkNoteText(values.note)

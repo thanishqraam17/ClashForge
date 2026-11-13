@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { FanContentNotice } from '@/components/legal/FanContentNotice'
 import { cn } from '@/lib/utils'
 import {
+  Castle,
   History,
   Home,
   ScanLine,
@@ -16,6 +17,7 @@ const navItems: Array<{
   end?: boolean
 }> = [
   { to: '/', label: 'Overview', icon: Home, end: true },
+  { to: '/village', label: 'My Village', icon: Castle },
   { to: '/scan', label: 'Scan Village', icon: ScanLine },
   { to: '/upgrades', label: 'Upgrades', icon: TrendingUp },
   { to: '/history', label: 'History', icon: History },
