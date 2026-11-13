@@ -45,6 +45,50 @@ export const INSTANCE_ITEM_CATEGORIES: readonly string[] = [
   'other'
 ]
 
+/** 5 gem-purchased ordinary Home Village Builder Huts. */
+export const ORDINARY_BUILDER_HUT_MAX = 5
+/** 5 ordinary huts + B.O.B. There is no other way to have more. */
+export const HOME_VILLAGE_BUILDER_MAX = 6
+
+/**
+ * Confirmed Home Village builder ownership, separated from legacy rows that
+ * have not been classified yet. Mirrors
+ * summariseHomeVillageBuilderOwnership in village-state-service.ts, computed
+ * here from the DTO the server already sends rather than needing its own
+ * IPC round trip.
+ */
+export type HomeVillageBuilderOwnership = {
+  ordinaryConfirmed: number
+  bobConfirmed: boolean
+  legacyUnclassified: number
+  /** Every row, confirmed or not: what availability is computed from. */
+  totalSlots: number
+  /** True when confirmed + legacy rows exceed the 6 that are ever possible. */
+  exceedsLimit: boolean
+}
+
+export function summariseHomeVillageBuilderOwnership(builders: readonly BuilderDto[]): HomeVillageBuilderOwnership {
+  const ordinaryConfirmed = builders.filter((b) => b.kind === 'ordinary').length
+  const bobConfirmed = builders.some((b) => b.kind === 'bob')
+  const legacyUnclassified = builders.filter((b) => b.kind === 'legacy-unclassified').length
+  return {
+    ordinaryConfirmed,
+    bobConfirmed,
+    legacyUnclassified,
+    totalSlots: builders.length,
+    exceedsLimit: ordinaryConfirmed + (bobConfirmed ? 1 : 0) + legacyUnclassified > HOME_VILLAGE_BUILDER_MAX
+  }
+}
+
+/**
+ * Legacy-unclassified rows, for display and individual removal. The server
+ * (reclassifyLegacyBuilders) decides consumption order on its own; this is
+ * sorted by slot purely for a stable display.
+ */
+export function legacyUnclassifiedBuilders(builders: readonly BuilderDto[]): BuilderDto[] {
+  return builders.filter((b) => b.kind === 'legacy-unclassified').sort((a, b) => a.slot - b.slot)
+}
+
 export function toLimitView(limit: ItemAtTownHallDto | null | undefined): ItemLimitView {
   if (limit === undefined || limit === null) return { status: 'unknown' }
   if (!limit.available) return { status: 'locked', unlocksAtTownHall: limit.unlocksAtTownHall }

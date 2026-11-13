@@ -44,9 +44,15 @@ const panel = (state: VillageStateDto, extra: Partial<BuilderPanelProps> = {}) =
       state={state}
       nameOf={(id) => (id === 'test-cannon' ? 'Test Cannon' : id)}
       pending={null}
-      countError={null}
+      ordinaryError={null}
+      bobError={null}
+      reclassifyError={null}
+      removeError={null}
       assignError={null}
-      onSetCount={() => undefined}
+      onSetOrdinaryCount={() => undefined}
+      onSetBob={() => undefined}
+      onReclassify={() => undefined}
+      onRemoveUnclassified={() => undefined}
       onAssign={() => undefined}
       {...extra}
     />
@@ -106,11 +112,13 @@ describe('My Village static rendering', () => {
     )
     const t = text(html)
     expect(t).toContain('Estimated 0–1 of 2 free')
-    expect(t).toContain('Builder 1 Test Cannon #2 → level 4 Busy')
-    expect(t).toContain('Builder 2 Possibly busy')
+    expect(t).toContain('Unclassified builder 1 Test Cannon #2 → level 4 Busy')
+    expect(t).toContain('Unclassified builder 2 Possibly busy')
     expect(t).toContain('Test Cannon #3 → level 4')
     expect(t).toContain('No builder is certainly free')
-    expect(html).not.toContain('<select')
+    // The assign-builder dropdown is never rendered when no builder is free;
+    // the legacy reclassification form's own <select> (for B.O.B.) is unrelated.
+    expect(html).not.toMatch(/Choose a free builder/)
   })
 
   it('offers only certainly free builders for an unknown-builder upgrade', () => {
@@ -127,10 +135,35 @@ describe('My Village static rendering', () => {
     expect(panel(stateWith([builder(1, 1, 'free')], [], { freeMin: 1, freeMax: 1 }), { assignError: null })).not.toContain('without a known builder')
   })
 
-  it('shows builder count errors from the service', () => {
-    const html = panel(stateWith([builder(1, 1, 'free')], [], {}), { countError: 'Cannot drop below 1 builder while 1 upgrade is in progress' })
+  it('shows ordinary-hut ownership errors from the service, bounded to 0-5', () => {
+    const html = panel(stateWith([builder(1, 1, 'free')], [], {}), {
+      ordinaryError: 'Cannot drop below 1 builder while 1 upgrade is in progress'
+    })
     expect(html).toContain('Cannot drop below 1 builder')
-    expect(html).toContain('(0–10)')
+    expect(html).toContain('(0–5)')
+  })
+
+  it('shows confirmed ownership, legacy count and total slots separately, with the over-limit warning on its own', () => {
+    const legacyRows = Array.from({ length: 7 }, (_, i) => builder(i + 1, i + 1, 'free'))
+    const html = text(panel(stateWith(legacyRows, [], {})))
+    expect(html).toContain('Ordinary huts 0 / 5')
+    expect(html).toContain('B.O.B. Not unlocked')
+    expect(html).toContain('Unclassified 7')
+    expect(html).toContain('Total operational 7')
+    expect(html).toContain('more than the 6 that are ever possible')
+    expect(html).toContain('carried over from before this update')
+  })
+
+  it('does not warn over the limit at exactly 6, and never offers the warning text when ownership fits', () => {
+    const rows = [
+      { ...builder(1, 1, 'free'), kind: 'ordinary' as const },
+      { ...builder(2, 2, 'free'), kind: 'bob' as const }
+    ]
+    const html = text(panel(stateWith(rows, [], {})))
+    expect(html).toContain('Ordinary huts 1 / 5')
+    expect(html).toContain('B.O.B. Unlocked')
+    expect(html).not.toContain('more than the 6 that are ever possible')
+    expect(html).not.toContain('carried over')
   })
 
   it('renders confirmation text with Cancel first and a destructive confirm', () => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { BuilderPanel, type BuilderPanelProps } from '@/components/village/BuilderPanel'
+import { BuilderPanel, type BuilderPanelPending, type BuilderPanelProps } from '@/components/village/BuilderPanel'
 import { BulkEditDialog } from '@/components/village/BulkEditDialog'
 import { StatusToast } from '@/components/village/feedback'
 import { ItemSection } from '@/components/village/ItemSection'
@@ -11,8 +11,12 @@ import {
   assignBuilderRequest,
   cancelUpgradeRequest,
   finishUpgradeRequest,
+  reclassifyLegacyRequest,
   removeInstanceRequest,
+  removeUnclassifiedRequest,
+  setBobRequest,
   setLevelRequest,
+  setOrdinaryHutsRequest,
   startUpgradeRequest
 } from '@/lib/village/edit-requests'
 import { toUserMessage } from '@/lib/village/ipc-errors'
@@ -107,7 +111,10 @@ function MyVillageContent({ data, pending, run }: { data: VillageData; pending: 
   const api = window.clashForge!
   const state = data.state
   const [villageError, setVillageError] = useState<string | null>(null)
-  const [countError, setCountError] = useState<string | null>(null)
+  const [ordinaryError, setOrdinaryError] = useState<string | null>(null)
+  const [bobError, setBobError] = useState<string | null>(null)
+  const [reclassifyError, setReclassifyError] = useState<string | null>(null)
+  const [removeError, setRemoveError] = useState<BuilderPanelProps['removeError']>(null)
   const [assignError, setAssignError] = useState<BuilderPanelProps['assignError']>(null)
   const [instanceErrors, setInstanceErrors] = useState<Readonly<Record<number, string>>>({})
   const [limits, setLimits] = useState<ItemLimits>({})
@@ -166,8 +173,20 @@ function MyVillageContent({ data, pending, run }: { data: VillageData; pending: 
   const saveVillage = async (input: VillageSaveInput) => {
     setVillageError(await run('village', () => api.village.save(input), 'Village saved'))
   }
-  const setCount = async (count: number) => {
-    setCountError(await run('count', () => api.builders.setCount({ count }), 'Builder count saved'))
+  const setOrdinaryCount = async (count: number) => {
+    setOrdinaryError(await run('ordinary', () => api.builders.setOrdinaryCount(setOrdinaryHutsRequest(count)), 'Ordinary Builder Huts saved'))
+  }
+  const setBob = async (unlocked: boolean) => {
+    setBobError(await run('bob', () => api.builders.setBob(setBobRequest(unlocked)), 'B.O.B. saved'))
+  }
+  const reclassify = async (input: { ordinaryCount: number; bob: boolean | 'unsure' }) => {
+    setReclassifyError(
+      await run('reclassify', () => api.builders.reclassifyLegacy(reclassifyLegacyRequest(input.ordinaryCount, input.bob)), 'Builders confirmed')
+    )
+  }
+  const removeUnclassified = async (id: number) => {
+    const message = await run(`builder-remove-${id}`, () => api.builders.removeUnclassified(removeUnclassifiedRequest(id)), 'Builder removed')
+    setRemoveError(message ? { id, message } : null)
   }
   const assign = async (instance: VillageItemDto, builderId: number) => {
     const message = await run(
@@ -233,8 +252,13 @@ function MyVillageContent({ data, pending, run }: { data: VillageData; pending: 
     else setBulkGroup(null)
   }
 
+  // Only these prefixes name an item instance id; builder-remove-<id> uses a
+  // different id space (builder ids) and must never match here by coincidence.
+  const ITEM_PENDING_PREFIXES = ['level-', 'remove-', 'upgrade-', 'finish-', 'cancel-']
   const pendingInstanceIds = new Set(
-    state.items.filter((i) => pending !== null && pending.endsWith(`-${i.id}`)).map((i) => i.id)
+    state.items
+      .filter((i) => pending !== null && ITEM_PENDING_PREFIXES.some((prefix) => pending === `${prefix}${i.id}`))
+      .map((i) => i.id)
   )
 
   return (
@@ -248,13 +272,23 @@ function MyVillageContent({ data, pending, run }: { data: VillageData; pending: 
         onSubmit={(input) => void saveVillage(input)}
       />
       <BuilderPanel
-        key={state.builders.map((b) => `${b.id}:${b.status}`).join(',')}
+        key={state.builders.map((b) => `${b.id}:${b.status}:${b.kind}`).join(',')}
         state={state}
         nameOf={nameOf}
-        pending={pending === 'count' || pending?.startsWith('assign-') ? (pending as BuilderPanelProps['pending']) : null}
-        countError={countError}
+        pending={
+          pending === 'ordinary' || pending === 'bob' || pending === 'reclassify' || pending?.startsWith('assign-') || pending?.startsWith('builder-remove-')
+            ? (pending as BuilderPanelPending)
+            : null
+        }
+        ordinaryError={ordinaryError}
+        bobError={bobError}
+        reclassifyError={reclassifyError}
+        removeError={removeError}
         assignError={assignError}
-        onSetCount={(count) => void setCount(count)}
+        onSetOrdinaryCount={(count) => void setOrdinaryCount(count)}
+        onSetBob={(unlocked) => void setBob(unlocked)}
+        onReclassify={(input) => void reclassify(input)}
+        onRemoveUnclassified={(id) => void removeUnclassified(id)}
         onAssign={(instance, builderId) => void assign(instance, builderId)}
       />
       <ItemSection

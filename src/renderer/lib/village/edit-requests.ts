@@ -1,4 +1,8 @@
 import type {
+  BuildersReclassifyLegacyInput,
+  BuildersRemoveUnclassifiedInput,
+  BuildersSetBobInput,
+  BuildersSetOrdinaryCountInput,
   VillageItemDto,
   VillageItemRemoveInput,
   VillageItemSaveInput,
@@ -125,4 +129,28 @@ export function bulkSetCountRequest(
     ...(include.length > 0 ? { includeActiveUpgrades: include } : {}),
     ...noteOf(options.note ?? '')
   }
+}
+
+// ---------------------------------------------------------------------------
+// Home Village builder ownership (ordinary huts, B.O.B., legacy reclassification)
+// ---------------------------------------------------------------------------
+
+export function setOrdinaryHutsRequest(count: number, note = ''): BuildersSetOrdinaryCountInput {
+  return { count, ...noteOf(note) }
+}
+
+export function setBobRequest(unlocked: boolean, note = ''): BuildersSetBobInput {
+  return { unlocked, ...noteOf(note) }
+}
+
+export function reclassifyLegacyRequest(
+  ordinaryCount: number,
+  bob: boolean | 'unsure',
+  note = ''
+): BuildersReclassifyLegacyInput {
+  return { ordinaryCount, bob, ...noteOf(note) }
+}
+
+export function removeUnclassifiedRequest(id: number, note = ''): BuildersRemoveUnclassifiedInput {
+  return { id, ...noteOf(note) }
 }

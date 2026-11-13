@@ -6,22 +6,41 @@ import {
   assignedInstance,
   availabilityLabel,
   certainlyFreeBuilders,
+  HOME_VILLAGE_BUILDER_MAX,
+  legacyUnclassifiedBuilders,
+  ORDINARY_BUILDER_HUT_MAX,
+  summariseHomeVillageBuilderOwnership,
   unknownBuilderUpgrades
 } from '@/lib/village/village-view-model'
 import type { BuilderDto, VillageItemDto, VillageStateDto } from '../../../shared/ipc/contracts'
 import { InlineError } from './feedback'
 
-/** Mirrors MAX_BUILDERS in the village-state service, which enforces it. */
-export const MAX_BUILDERS = 10
+/**
+ * Which action is currently running, if any. Builder removal is namespaced
+ * (builder-remove-, not remove-) so its key can never collide with an item
+ * instance's own remove-<id> key, which uses the same pending field.
+ */
+export type BuilderPanelPending =
+  | 'ordinary'
+  | 'bob'
+  | 'reclassify'
+  | `builder-remove-${number}`
+  | `assign-${number}`
+  | null
 
 export type BuilderPanelProps = {
   state: VillageStateDto
   nameOf: (itemId: string) => string
-  /** Which action is running, if any. */
-  pending: 'count' | `assign-${number}` | null
-  countError: string | null
+  pending: BuilderPanelPending
+  ordinaryError: string | null
+  bobError: string | null
+  reclassifyError: string | null
+  removeError: { id: number; message: string } | null
   assignError: { instanceId: number; message: string } | null
-  onSetCount: (count: number) => void
+  onSetOrdinaryCount: (count: number) => void
+  onSetBob: (unlocked: boolean) => void
+  onReclassify: (input: { ordinaryCount: number; bob: boolean | 'unsure' }) => void
+  onRemoveUnclassified: (id: number) => void
   onAssign: (instance: VillageItemDto, builderId: number) => void
 }
 
@@ -31,11 +50,17 @@ const STATUS_TEXT: Record<BuilderDto['status'], string> = {
   'possibly-busy': 'Possibly busy'
 }
 
+/** How one builder row is labelled, by what it actually is. */
+function builderLabel(builder: BuilderDto): string {
+  if (builder.kind === 'bob') return 'B.O.B.'
+  if (builder.kind === 'ordinary') return `Builder Hut ${builder.slot}`
+  return `Unclassified builder ${builder.slot}`
+}
+
 export function BuilderPanel(props: BuilderPanelProps): React.JSX.Element {
   const { state, nameOf, pending } = props
-  const [countText, setCountText] = useState(String(state.builders.length))
-  const count = parseWholeNumber(countText)
-  const countInvalid = count === null || count > MAX_BUILDERS
+  const ownership = summariseHomeVillageBuilderOwnership(state.builders)
+  const legacy = legacyUnclassifiedBuilders(state.builders)
   const label = availabilityLabel(state.builderAvailability)
   const free = certainlyFreeBuilders(state)
   const unknown = unknownBuilderUpgrades(state)
@@ -56,58 +81,46 @@ export function BuilderPanel(props: BuilderPanelProps): React.JSX.Element {
       )}
       {label.inconsistent && (
         <p className="mt-1 text-xs text-warning">
-          More upgrades are recorded than builders. Check the builder count and the active upgrades.
+          More upgrades are recorded than builders. Check builder ownership and the active upgrades.
         </p>
       )}
 
-      <form
-        className="mt-3 flex items-end gap-2"
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!countInvalid && count !== state.builders.length) props.onSetCount(count!)
-        }}
-      >
-        <div>
-          <label htmlFor="builder-count" className="block text-xs text-muted">
-            Number of builders (0–{MAX_BUILDERS})
-          </label>
-          <div className="mt-1 flex items-center gap-1">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              aria-label="Fewer builders"
-              disabled={count === null || count <= 0}
-              onClick={() => setCountText(String(Math.max(0, (count ?? 0) - 1)))}
-            >
-              −
-            </Button>
-            <input
-              id="builder-count"
-              inputMode="numeric"
-              value={countText}
-              onChange={(e) => setCountText(e.target.value)}
-              aria-invalid={countInvalid ? true : undefined}
-              className="h-8 w-14 rounded-md border border-border bg-surface-0 px-2 text-center font-mono text-sm tabular-nums aria-[invalid=true]:border-destructive"
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              aria-label="More builders"
-              disabled={count === null || count >= MAX_BUILDERS}
-              onClick={() => setCountText(String(Math.min(MAX_BUILDERS, (count ?? 0) + 1)))}
-            >
-              +
-            </Button>
-          </div>
-        </div>
-        <Button type="submit" size="sm" disabled={pending !== null || countInvalid || count === state.builders.length}>
-          {pending === 'count' ? 'Saving…' : 'Save count'}
-        </Button>
-      </form>
-      {countInvalid && <InlineError message={`Enter a whole number from 0 to ${MAX_BUILDERS}`} className="mt-1" />}
-      <InlineError message={props.countError} className="mt-1" />
+      {/* Confirmed ownership, legacy count and the total operational slots are shown separately. */}
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4" aria-label="Builder ownership">
+        <OwnershipStat label="Ordinary huts" value={`${ownership.ordinaryConfirmed} / ${ORDINARY_BUILDER_HUT_MAX}`} />
+        <OwnershipStat label="B.O.B." value={ownership.bobConfirmed ? 'Unlocked' : 'Not unlocked'} />
+        <OwnershipStat label="Unclassified" value={String(ownership.legacyUnclassified)} />
+        <OwnershipStat label="Total operational" value={String(ownership.totalSlots)} />
+      </dl>
+      {ownership.exceedsLimit && (
+        <p role="alert" className="mt-2 text-xs text-warning">
+          This village has {ownership.totalSlots} Home Village builders recorded, more than the {HOME_VILLAGE_BUILDER_MAX}{' '}
+          that are ever possible (5 ordinary huts + B.O.B.). Reclassify or remove the unclassified ones below.
+        </p>
+      )}
+
+      <OwnershipControls
+        ordinaryConfirmed={ownership.ordinaryConfirmed}
+        bobConfirmed={ownership.bobConfirmed}
+        pending={pending}
+        ordinaryError={props.ordinaryError}
+        bobError={props.bobError}
+        onSetOrdinaryCount={props.onSetOrdinaryCount}
+        onSetBob={props.onSetBob}
+      />
+
+      {legacy.length > 0 && (
+        <LegacyReclassification
+          legacy={legacy}
+          ordinaryConfirmed={ownership.ordinaryConfirmed}
+          bobConfirmed={ownership.bobConfirmed}
+          pending={pending}
+          reclassifyError={props.reclassifyError}
+          removeError={props.removeError}
+          onReclassify={props.onReclassify}
+          onRemoveUnclassified={props.onRemoveUnclassified}
+        />
+      )}
 
       {slots.length > 0 && (
         <ul className="mt-4 divide-y divide-border-subtle rounded-md border border-border-subtle">
@@ -115,7 +128,7 @@ export function BuilderPanel(props: BuilderPanelProps): React.JSX.Element {
             const working = assignedInstance(state, builder)
             return (
               <li key={builder.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                <span className="text-foreground">Builder {builder.slot}</span>
+                <span className="text-foreground">{builderLabel(builder)}</span>
                 <span className="min-w-0 truncate text-muted">
                   {working ? `${nameOf(working.itemId)} #${working.instanceNumber} → level ${working.targetLevel}` : ''}
                 </span>
@@ -163,6 +176,162 @@ export function BuilderPanel(props: BuilderPanelProps): React.JSX.Element {
   )
 }
 
+function OwnershipStat({ label, value }: { label: string; value: string }): React.JSX.Element {
+  return (
+    <div>
+      <dt className="text-[11px] text-muted">{label}</dt>
+      <dd className="font-mono text-sm tabular-nums text-foreground">{value}</dd>
+    </div>
+  )
+}
+
+/** Ordinary-hut stepper (0-5) and the B.O.B. toggle. Each is its own confirmed pool. */
+function OwnershipControls(props: {
+  ordinaryConfirmed: number
+  bobConfirmed: boolean
+  pending: BuilderPanelPending
+  ordinaryError: string | null
+  bobError: string | null
+  onSetOrdinaryCount: (count: number) => void
+  onSetBob: (unlocked: boolean) => void
+}): React.JSX.Element {
+  const [ordinaryText, setOrdinaryText] = useState(String(props.ordinaryConfirmed))
+  const ordinary = parseWholeNumber(ordinaryText)
+  const ordinaryInvalid = ordinary === null || ordinary > ORDINARY_BUILDER_HUT_MAX
+
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-4">
+      <form
+        className="flex items-end gap-2"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!ordinaryInvalid && ordinary !== props.ordinaryConfirmed) props.onSetOrdinaryCount(ordinary!)
+        }}
+      >
+        <div>
+          <label htmlFor="ordinary-huts" className="block text-xs text-muted">
+            Ordinary Builder Huts (0–{ORDINARY_BUILDER_HUT_MAX})
+          </label>
+          <input
+            id="ordinary-huts"
+            inputMode="numeric"
+            value={ordinaryText}
+            onChange={(e) => setOrdinaryText(e.target.value)}
+            aria-invalid={ordinaryInvalid ? true : undefined}
+            className="mt-1 h-8 w-14 rounded-md border border-border bg-surface-0 px-2 text-center font-mono text-sm tabular-nums aria-[invalid=true]:border-destructive"
+          />
+        </div>
+        <Button type="submit" size="sm" disabled={props.pending !== null || ordinaryInvalid || ordinary === props.ordinaryConfirmed}>
+          {props.pending === 'ordinary' ? 'Saving…' : 'Save'}
+        </Button>
+      </form>
+
+      <label className="flex items-center gap-1.5 text-sm text-foreground">
+        <input
+          type="checkbox"
+          checked={props.bobConfirmed}
+          disabled={props.pending !== null}
+          onChange={(e) => props.onSetBob(e.target.checked)}
+        />
+        B.O.B. unlocked
+        {props.pending === 'bob' && <span className="text-xs text-muted">Saving…</span>}
+      </label>
+
+      <div className="basis-full">
+        <InlineError message={props.ordinaryError} />
+        <InlineError message={props.bobError} />
+      </div>
+    </div>
+  )
+}
+
+/** One-time (repeatable) confirmation of what inherited, unclassified builders actually are. */
+function LegacyReclassification(props: {
+  legacy: BuilderDto[]
+  ordinaryConfirmed: number
+  bobConfirmed: boolean
+  pending: BuilderPanelPending
+  reclassifyError: string | null
+  removeError: { id: number; message: string } | null
+  onReclassify: (input: { ordinaryCount: number; bob: boolean | 'unsure' }) => void
+  onRemoveUnclassified: (id: number) => void
+}): React.JSX.Element {
+  const [ordinaryText, setOrdinaryText] = useState(String(Math.min(5, props.ordinaryConfirmed + props.legacy.length)))
+  const [bob, setBob] = useState<'yes' | 'no' | 'unsure'>(props.bobConfirmed ? 'yes' : 'unsure')
+  const target = parseWholeNumber(ordinaryText)
+  const targetInvalid = target === null || target < props.ordinaryConfirmed || target > 5
+
+  return (
+    <div className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-3">
+      <h3 className="text-sm font-medium text-foreground">
+        {props.legacy.length} builder{props.legacy.length === 1 ? '' : 's'} carried over from before this update
+      </h3>
+      <p className="mt-1 text-xs text-muted">
+        Confirm what these are. Anything left unconfirmed stays listed below and still works normally.
+      </p>
+
+      <form
+        className="mt-2 flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault()
+          if (!targetInvalid) props.onReclassify({ ordinaryCount: target!, bob: bob === 'unsure' ? 'unsure' : bob === 'yes' })
+        }}
+      >
+        <div>
+          <label htmlFor="reclassify-ordinary" className="block text-xs text-muted">
+            Total ordinary Builder Huts (0–5)
+          </label>
+          <input
+            id="reclassify-ordinary"
+            inputMode="numeric"
+            value={ordinaryText}
+            onChange={(e) => setOrdinaryText(e.target.value)}
+            aria-invalid={targetInvalid ? true : undefined}
+            className="mt-1 h-8 w-14 rounded-md border border-border bg-surface-0 px-2 text-center font-mono text-sm tabular-nums aria-[invalid=true]:border-destructive"
+          />
+        </div>
+        <div>
+          <label htmlFor="reclassify-bob" className="block text-xs text-muted">
+            B.O.B.
+          </label>
+          <select
+            id="reclassify-bob"
+            value={bob}
+            disabled={props.bobConfirmed}
+            onChange={(e) => setBob(e.target.value as typeof bob)}
+            className="mt-1 h-8 rounded-md border border-border bg-surface-0 px-2 text-sm"
+          >
+            <option value="unsure">Not sure</option>
+            <option value="yes">Unlocked</option>
+            <option value="no">Not unlocked</option>
+          </select>
+        </div>
+        <Button type="submit" size="sm" disabled={props.pending !== null || targetInvalid}>
+          {props.pending === 'reclassify' ? 'Saving…' : 'Confirm'}
+        </Button>
+      </form>
+      <InlineError message={props.reclassifyError} className="mt-1" />
+
+      <ul className="mt-3 space-y-1">
+        {props.legacy.map((builder) => (
+          <li key={builder.id} className="flex items-center justify-between gap-2 text-xs text-muted">
+            <span>Unclassified builder {builder.slot}</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={props.pending !== null}
+              onClick={() => props.onRemoveUnclassified(builder.id)}
+            >
+              {props.pending === `builder-remove-${builder.id}` ? 'Removing…' : 'Remove'}
+            </Button>
+            {props.removeError?.id === builder.id && <InlineError message={props.removeError.message} />}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 function AssignRow(props: {
   instance: VillageItemDto
   name: string
@@ -195,7 +364,7 @@ function AssignRow(props: {
               <option value="">Choose a free builder</option>
               {props.freeBuilders.map((b) => (
                 <option key={b.id} value={b.id}>
-                  Builder {b.slot}
+                  {b.kind === 'bob' ? 'B.O.B.' : `Builder ${b.slot}`}
                 </option>
               ))}
             </select>
